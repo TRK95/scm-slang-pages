@@ -1,98 +1,128 @@
-// SCM-Slang Browser Wrapper
-// This file provides a browser-compatible interface for SCM-Slang
+(function (factory) {
+    typeof define === 'function' && define.amd ? define(factory) :
+    factory();
+})((function () { 'use strict';
 
-(function() {
-  'use strict';
-  
-  // Mock exports object for browser compatibility
-  var exports = {};
-  
-  // Mock require function
-  function require(module) {
-    if (module === 'tslib') {
-      return {
-        __exportStar: function() {},
-        __awaiter: function() {},
-        __generator: function() {}
-      };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.schemeParse = exports.ParserError = exports.LexerError = exports.unparse = exports.initialise = exports.BasicEvaluator = exports.SchemeEvaluator = exports.SchemeComplexNumber = exports.createProgramEnvironment = exports.evaluate = exports.parseSchemeSimple = void 0;
+    exports.encode = encode;
+    exports.decode = decode;
+    const tslib_1 = require("tslib");
+    const js_base64_1 = require("js-base64");
+    // Import for internal use
+    const SchemeEvaluator_1 = require("./conductor/runner/SchemeEvaluator");
+    const initialise_1 = require("./conductor/runner/util/initialise");
+    // Export CSE Machine functionality
+    var simple_parser_1 = require("./CSE-machine/simple-parser");
+    Object.defineProperty(exports, "parseSchemeSimple", { enumerable: true, get: function () { return simple_parser_1.parseSchemeSimple; } });
+    var interpreter_1 = require("./CSE-machine/interpreter");
+    Object.defineProperty(exports, "evaluate", { enumerable: true, get: function () { return interpreter_1.evaluate; } });
+    var environment_1 = require("./CSE-machine/environment");
+    Object.defineProperty(exports, "createProgramEnvironment", { enumerable: true, get: function () { return environment_1.createProgramEnvironment; } });
+    var complex_1 = require("./CSE-machine/complex");
+    Object.defineProperty(exports, "SchemeComplexNumber", { enumerable: true, get: function () { return complex_1.SchemeComplexNumber; } });
+    // Export Conductor integration
+    var SchemeEvaluator_2 = require("./conductor/runner/SchemeEvaluator");
+    Object.defineProperty(exports, "SchemeEvaluator", { enumerable: true, get: function () { return SchemeEvaluator_2.SchemeEvaluator; } });
+    var BasicEvaluator_1 = require("./conductor/runner/BasicEvaluator");
+    Object.defineProperty(exports, "BasicEvaluator", { enumerable: true, get: function () { return BasicEvaluator_1.BasicEvaluator; } });
+    var initialise_2 = require("./conductor/runner/util/initialise");
+    Object.defineProperty(exports, "initialise", { enumerable: true, get: function () { return initialise_2.initialise; } });
+    // Export types
+    tslib_1.__exportStar(require("./conductor/runner/types"), exports);
+    tslib_1.__exportStar(require("./conductor/types"), exports);
+    tslib_1.__exportStar(require("./conduit/types"), exports);
+    tslib_1.__exportStar(require("./common/errors"), exports);
+    // Export transpiler functionality (for compatibility)
+    tslib_1.__exportStar(require("./utils/encoder-visitor"), exports);
+    var reverse_parser_1 = require("./utils/reverse_parser");
+    Object.defineProperty(exports, "unparse", { enumerable: true, get: function () { return reverse_parser_1.unparse; } });
+    var transpiler_1 = require("./transpiler");
+    Object.defineProperty(exports, "LexerError", { enumerable: true, get: function () { return transpiler_1.LexerError; } });
+    var transpiler_2 = require("./transpiler");
+    Object.defineProperty(exports, "ParserError", { enumerable: true, get: function () { return transpiler_2.ParserError; } });
+    var transpiler_3 = require("./transpiler");
+    Object.defineProperty(exports, "schemeParse", { enumerable: true, get: function () { return transpiler_3.schemeParse; } });
+    const JS_KEYWORDS = [
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "eval",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
+        "enum",
+        "await",
+        "implements",
+        "package",
+        "protected",
+        "static",
+        "interface",
+        "private",
+        "public",
+    ];
+    /**
+     * Takes a Scheme identifier and encodes it to follow JS naming conventions.
+     *
+     * @param identifier An identifier name.
+     * @returns An encoded identifier that follows JS naming conventions.
+     */
+    function encode(identifier) {
+        if (JS_KEYWORDS.includes(identifier) || identifier.startsWith("$scheme_")) {
+            return ("$scheme_" +
+                (0, js_base64_1.encode)(identifier).replace(/([^a-zA-Z0-9_])/g, (match) => `\$${match.charCodeAt(0)}\$`));
+        }
+        else {
+            return identifier.replace(/([^a-zA-Z0-9_])/g, (match) => `\$${match.charCodeAt(0)}\$`);
+        }
     }
-    if (module === 'js-base64') {
-      return {
-        encode: function(str) { return btoa(str); },
-        decode: function(str) { return atob(str); }
-      };
+    /**
+     * Takes a JS identifier and decodes it to follow Scheme naming conventions.
+     *
+     * @param identifier An encoded identifier name.
+     * @returns A decoded identifier that follows Scheme naming conventions.
+     */
+    function decode(identifier) {
+        if (identifier.startsWith("$scheme_")) {
+            return (0, js_base64_1.decode)(identifier
+                .slice(8)
+                .replace(/\$([0-9]+)\$/g, (_, code) => String.fromCharCode(parseInt(code))));
+        }
+        else {
+            return identifier.replace(/\$([0-9]+)\$/g, (_, code) => String.fromCharCode(parseInt(code)));
+        }
     }
-    return {};
-  }
-  
-  // Include the actual SCM-Slang code here
-  // This is a simplified version for testing
-  
-  // Mock implementations for testing
-  function parseSchemeSimple(code) {
-    console.log('parseSchemeSimple called with:', code);
-    return { type: 'program', body: [] };
-  }
-  
-  function evaluate(code, environment) {
-    console.log('evaluate called with:', code, environment);
-    return { value: 42, type: 'number' };
-  }
-  
-  function createProgramEnvironment() {
-    console.log('createProgramEnvironment called');
-    return { variables: {}, functions: {} };
-  }
-  
-  function SchemeComplexNumber(real, imag) {
-    this.real = real || 0;
-    this.imag = imag || 0;
-  }
-  
-  function SchemeEvaluator() {
-    this.evaluate = evaluate;
-    this.parse = parseSchemeSimple;
-  }
-  
-  function BasicEvaluator() {
-    this.evaluate = evaluate;
-  }
-  
-  // Export functions to global scope (only in browser environment)
-  if (typeof window !== 'undefined') {
-    window.parseSchemeSimple = parseSchemeSimple;
-    window.evaluate = evaluate;
-    window.createProgramEnvironment = createProgramEnvironment;
-    window.SchemeComplexNumber = SchemeComplexNumber;
-    window.SchemeEvaluator = SchemeEvaluator;
-    window.BasicEvaluator = BasicEvaluator;
-  }
-  
-  // Also export as UMD module
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-      parseSchemeSimple: parseSchemeSimple,
-      evaluate: evaluate,
-      createProgramEnvironment: createProgramEnvironment,
-      SchemeComplexNumber: SchemeComplexNumber,
-      SchemeEvaluator: SchemeEvaluator,
-      BasicEvaluator: BasicEvaluator
-    };
-  } else if (typeof define === 'function' && define.amd) {
-    define(function() {
-      return {
-        parseSchemeSimple: parseSchemeSimple,
-        evaluate: evaluate,
-        createProgramEnvironment: createProgramEnvironment,
-        SchemeComplexNumber: SchemeComplexNumber,
-        SchemeEvaluator: SchemeEvaluator,
-        BasicEvaluator: BasicEvaluator
-      };
-    });
-  }
-  
-  // Log success only in browser environment
-  if (typeof console !== 'undefined') {
-    console.log('SCM-Slang loaded successfully!');
-  }
-})();
+    // Initialize conductor (following py-slang pattern)
+    // Note: This will be executed when the module is loaded
+    const { runnerPlugin, conduit } = (0, initialise_1.initialise)(SchemeEvaluator_1.SchemeEvaluator);
+
+}));
