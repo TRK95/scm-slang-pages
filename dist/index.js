@@ -2895,11 +2895,31 @@
         return { runnerPlugin, conduit };
     }
 
-    const walk = require("acorn-walk");
+    // Simple AST walker to replace acorn-walk
+    function walkFull(ast, visitor) {
+        visitor(ast);
+        
+        // Walk through all properties that might contain nodes
+        for (const key in ast) {
+            const value = ast[key];
+            if (value && typeof value === 'object') {
+                if (Array.isArray(value)) {
+                    value.forEach(item => {
+                        if (item && typeof item === 'object' && item.type) {
+                            walkFull(item, visitor);
+                        }
+                    });
+                } else if (value.type) {
+                    walkFull(value, visitor);
+                }
+            }
+        }
+    }
+    
     // A function to modify all names in the estree program.
     // Prevents any name collisions with JS keywords and invalid characters.
     function estreeEncode(ast) {
-        walk.full(ast, (node) => {
+        walkFull(ast, (node) => {
             if (node.encoded === true) {
                 return;
             }
@@ -2909,13 +2929,13 @@
                 node.encoded = true;
             }
         });
-        walk.full(ast, (node) => {
+        walkFull(ast, (node) => {
             node.encoded = undefined;
         });
         return ast;
     }
     function estreeDecode(ast) {
-        walk.full(ast, (node) => {
+        walkFull(ast, (node) => {
             if (node.decoded === true) {
                 return;
             }
@@ -2925,7 +2945,7 @@
                 node.decoded = true;
             }
         });
-        walk.full(ast, (node) => {
+        walkFull(ast, (node) => {
             node.decoded = undefined;
         });
         return ast;
