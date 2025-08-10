@@ -1913,11 +1913,11 @@
             // The value will be evaluated first, then the define instruction will use the result
             console.log('DEBUG: Definition - expr.value type:', expr.value.constructor.name);
             console.log('DEBUG: Definition - expr.value:', expr.value);
-            // Always push the value to control for evaluation first
-            // This ensures complex expressions like (+ 5 3) are evaluated before define
-            console.log('DEBUG: Pushing value to control for evaluation');
-            control.push(expr.value);
+            // Push the define instruction AFTER the value evaluation
+            // This ensures the value is evaluated and pushed to stash before define runs
+            console.log('DEBUG: Pushing define instruction after value evaluation');
             control.push(createDefineInstr(expr.name.name, expr.value));
+            control.push(expr.value);
         }
         else if (expr instanceof Atomic.Reassignment) {
             // Push the value to be evaluated, then the set instruction
@@ -1937,11 +1937,12 @@
         }
         else if (expr instanceof Atomic.Conditional) {
             console.log('DEBUG: Evaluating Conditional expression');
-            // Push test, consequent, alternate, then branch instruction
+            // Push branch instruction AFTER test evaluation
+            // This ensures test is evaluated and pushed to stash before branch runs
+            control.push(createBranchInstr(expr.consequent, expr.alternate));
             control.push(expr.test);
             control.push(expr.consequent);
             control.push(expr.alternate);
-            control.push(createBranchInstr(expr.consequent, expr.alternate));
         }
         else if (expr instanceof Atomic.Lambda) {
             // Create closure
