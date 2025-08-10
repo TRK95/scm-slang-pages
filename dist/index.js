@@ -1,5 +1,8 @@
-var ScmSlangRunner = (function (exports) {
-    'use strict';
+(function (global, factory) {
+    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
+    typeof define === 'function' && define.amd ? define(['exports'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.ScmSlangRunner = {}));
+})(this, (function (exports) { 'use strict';
 
     // This file is adapted from:
     // https://github.com/source-academy/conductor
@@ -2940,6 +2943,15 @@ var ScmSlangRunner = (function (exports) {
         postMessage: () => { },
         onmessage: null
     })) {
+        // Skip conductor initialization in browser environment for now
+        // This is causing issues with postMessage
+        if (typeof window !== 'undefined') {
+            // Return mock objects for browser
+            return {
+                runnerPlugin: {},
+                conduit: {}
+            };
+        }
         const conduit = new Conduit(link, false);
         const runnerPlugin = conduit.registerPlugin(RunnerPlugin, evaluatorClass);
         return { runnerPlugin, conduit };
@@ -3168,7 +3180,19 @@ var ScmSlangRunner = (function (exports) {
     }
     // Initialize conductor (following py-slang pattern)
     // Note: This will be executed when the module is loaded
-    const { runnerPlugin, conduit } = initialise(SchemeEvaluator);
+    exports.runnerPlugin = void 0;
+    exports.conduit = void 0;
+    try {
+        const result = initialise(SchemeEvaluator);
+        exports.runnerPlugin = result.runnerPlugin;
+        exports.conduit = result.conduit;
+    }
+    catch (error) {
+        console.warn('Conductor initialization failed, using mock objects:', error);
+        // Create mock objects if initialization fails
+        exports.runnerPlugin = {};
+        exports.conduit = {};
+    }
 
     exports.AbortServiceMessage = AbortServiceMessage;
     exports.BasicEvaluator = BasicEvaluator;
@@ -3182,7 +3206,6 @@ var ScmSlangRunner = (function (exports) {
     exports.SchemeComplexNumber = SchemeComplexNumber;
     exports.SchemeEvaluator = SchemeEvaluator;
     exports.Stash = Stash;
-    exports.conduit = conduit;
     exports.createProgramEnvironment = createProgramEnvironment;
     exports.decode = decode;
     exports.encode = encode;
@@ -3191,9 +3214,6 @@ var ScmSlangRunner = (function (exports) {
     exports.evaluate = evaluate;
     exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
-    exports.runnerPlugin = runnerPlugin;
     exports.unparse = unparse;
 
-    return exports;
-
-})({});
+}));
