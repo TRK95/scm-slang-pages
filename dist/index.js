@@ -2000,9 +2000,14 @@
         switch (instruction.instrType) {
             case InstrType.DEFINE: {
                 const value = stash.pop();
-                if (!value)
+                if (!value) {
+                    console.error('DEBUG: Stash is empty when define instruction runs');
+                    console.error('DEBUG: Stash size:', stash.size());
+                    console.error('DEBUG: Define instruction:', instruction);
                     throw new Error('No value to define');
+                }
                 const defineInstr = instruction;
+                console.log('DEBUG: Defining', defineInstr.name, 'with value:', value);
                 context.environment.define(defineInstr.name, value);
                 // Push void value to indicate successful definition
                 stash.push({ type: 'void' });
