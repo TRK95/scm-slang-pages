@@ -1056,9 +1056,13 @@
             if (elements.length === 0) {
                 return new Atomic.Nil(location);
             }
+            console.log('DEBUG: parseList - elements:', elements.length);
+            console.log('DEBUG: parseList - first element type:', elements[0]?.constructor.name);
+            console.log('DEBUG: parseList - first element:', elements[0]);
             // Check for special forms
             if (elements.length > 0 && elements[0] instanceof Atomic.Identifier) {
                 const first = elements[0];
+                console.log('DEBUG: parseList - checking special form:', first.name);
                 if (first.name === 'define') {
                     return this.parseDefine(elements, location);
                 }
@@ -1081,14 +1085,17 @@
             // Check if this is a parameter list (single element that's not a special form)
             if (elements.length === 1 && elements[0] instanceof Atomic.Identifier) {
                 // This could be a parameter list like (x) in lambda
+                console.log('DEBUG: parseList - returning parameter list');
                 return new Extended.List(location, elements);
             }
             // Regular function application
             if (elements.length > 0) {
                 const operator = elements[0];
                 const operands = elements.slice(1);
+                console.log('DEBUG: parseList - returning application');
                 return new Atomic.Application(location, operator, operands);
             }
+            console.log('DEBUG: parseList - returning generic list');
             return new Extended.List(location, elements);
         }
         parseDefine(elements, location) {
@@ -1097,20 +1104,37 @@
             }
             const name = elements[1];
             const value = elements[2];
+            console.log('DEBUG: parseDefine - name type:', name.constructor.name);
+            console.log('DEBUG: parseDefine - name:', name);
+            console.log('DEBUG: parseDefine - Extended.List check:', name instanceof Extended.List);
             // Handle function definition: (define (func-name args) body)
-            if (name instanceof Extended.List && name.elements.length > 0) {
-                const funcName = name.elements[0];
+            if ((name instanceof Extended.List && name.elements.length > 0) ||
+                (name instanceof Atomic.Application && name.operator instanceof Atomic.Identifier)) {
+                console.log('DEBUG: parseDefine - Processing function definition');
+                let funcName;
+                let params;
+                if (name instanceof Extended.List) {
+                    funcName = name.elements[0];
+                    params = name.elements.slice(1).filter(e => e instanceof Atomic.Identifier);
+                }
+                else {
+                    // Handle Application case: (add x y) -> operator is 'add', operands are [x, y]
+                    funcName = name.operator;
+                    params = name.operands.filter(e => e instanceof Atomic.Identifier);
+                }
+                console.log('DEBUG: parseDefine - funcName type:', funcName.constructor.name);
+                console.log('DEBUG: parseDefine - funcName:', funcName.name);
                 if (!(funcName instanceof Atomic.Identifier)) {
                     throw new Error('function name must be an identifier');
                 }
-                // Extract parameters
-                const params = name.elements.slice(1).filter(e => e instanceof Atomic.Identifier);
+                console.log('DEBUG: parseDefine - params:', params.length);
                 // Create lambda expression for the function body
                 const lambda = new Atomic.Lambda(location, value, params);
                 // Return definition with lambda as value
                 return new Atomic.Definition(location, funcName, lambda);
             }
             // Handle variable definition: (define name value)
+            console.log('DEBUG: parseDefine - Processing variable definition');
             if (!(name instanceof Atomic.Identifier)) {
                 throw new Error('define name must be an identifier');
             }
@@ -1122,10 +1146,17 @@
             }
             const paramsExpr = elements[1];
             const body = elements[2];
+            console.log('DEBUG: parseLambda - paramsExpr type:', paramsExpr.constructor.name);
+            console.log('DEBUG: parseLambda - paramsExpr:', paramsExpr);
             let params = [];
             if (paramsExpr instanceof Extended.List) {
                 // Handle parameter list like (x y z)
                 params = paramsExpr.elements.filter(e => e instanceof Atomic.Identifier);
+            }
+            else if (paramsExpr instanceof Atomic.Application && paramsExpr.operator instanceof Atomic.Identifier) {
+                // Handle Application case: (x y) -> operator is 'x', operands are ['y']
+                params = [paramsExpr.operator];
+                params.push(...paramsExpr.operands.filter(e => e instanceof Atomic.Identifier));
             }
             else if (paramsExpr instanceof Atomic.Identifier) {
                 // Handle single parameter like x
@@ -1138,6 +1169,7 @@
             else {
                 throw new Error('lambda parameters must be identifiers');
             }
+            console.log('DEBUG: parseLambda - params:', params.length);
             return new Atomic.Lambda(location, body, params);
         }
         parseConditional(elements, location) {
