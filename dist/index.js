@@ -1466,6 +1466,7 @@
         InstrType["CAR"] = "Car";
         InstrType["CDR"] = "Cdr";
         InstrType["CONS"] = "Cons";
+        InstrType["RESTORE_ENV"] = "RestoreEnv";
     })(InstrType || (InstrType = {}));
 
     // instrCreator.ts
@@ -1553,6 +1554,13 @@
             srcNode: consequent,
             consequent,
             alternate,
+        };
+    }
+    function createRestoreEnvInstr(env) {
+        return {
+            instrType: InstrType.RESTORE_ENV,
+            srcNode: { type: "StatementSequence", body: [], location: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } } },
+            env,
         };
     }
 
@@ -2081,12 +2089,18 @@
                 }
                 console.log("DEBUG: Arguments:", args);
                 if (operator.type === "closure") {
-                    // Apply closure
+                    // Apply closure - save current environment and create new one
+                    const currentEnv = context.environment;
                     const newEnv = createBlockEnvironment(operator.env);
+                    // Bind parameters to the new environment
                     for (let i = 0; i < operator.params.length; i++) {
                         newEnv.define(operator.params[i], args[i] || { type: "nil" });
                     }
+                    // Set the new environment for function execution
                     context.environment = newEnv;
+                    // Push a marker to restore environment after function execution
+                    control.push(createRestoreEnvInstr(currentEnv));
+                    // Push function body for execution
                     control.push(...operator.body);
                 }
                 else if (operator.type === "primitive") {
@@ -2220,6 +2234,11 @@
                         control.push(condInstr.catchall);
                     }
                 }
+                break;
+            }
+            case InstrType.RESTORE_ENV: {
+                const restoreInstr = instruction;
+                context.environment = restoreInstr.env;
                 break;
             }
             default:
