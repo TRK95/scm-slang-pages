@@ -1,8 +1,5 @@
-(function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
-    typeof define === 'function' && define.amd ? define(['exports'], factory) :
-    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.ScmSlangRunner = {}));
-})(this, (function (exports) { 'use strict';
+var ScmSlangRunner = (function (exports) {
+    'use strict';
 
     // This file is adapted from:
     // https://github.com/source-academy/conductor
@@ -2948,6 +2945,35 @@
         return { runnerPlugin, conduit };
     }
 
+    // Import encode/decode functions directly to avoid circular dependency
+    const b64Encode$1 = (str) => btoa(unescape(encodeURIComponent(str)));
+    const b64Decode$1 = (str) => decodeURIComponent(escape(atob(str)));
+    const JS_KEYWORDS$1 = [
+        "break", "case", "catch", "class", "const", "continue", "debugger", "default",
+        "delete", "do", "else", "eval", "export", "extends", "false", "finally", "for",
+        "function", "if", "import", "in", "instanceof", "new", "return", "super", "switch",
+        "this", "throw", "true", "try", "typeof", "var", "void", "while", "with", "yield",
+        "enum", "await", "implements", "package", "protected", "static", "interface", "private", "public",
+    ];
+    function encode$1(identifier) {
+        if (JS_KEYWORDS$1.includes(identifier) || identifier.startsWith("$scheme_")) {
+            return ("$scheme_" +
+                b64Encode$1(identifier).replace(/([^a-zA-Z0-9_])/g, (match) => `\$${match.charCodeAt(0)}\$`));
+        }
+        else {
+            return identifier.replace(/([^a-zA-Z0-9_])/g, (match) => `\$${match.charCodeAt(0)}\$`);
+        }
+    }
+    function decode$1(identifier) {
+        if (identifier.startsWith("$scheme_")) {
+            return b64Decode$1(identifier
+                .slice(8)
+                .replace(/\$([0-9]+)\$/g, (_, code) => String.fromCharCode(parseInt(code))));
+        }
+        else {
+            return identifier.replace(/\$([0-9]+)\$/g, (_, code) => String.fromCharCode(parseInt(code)));
+        }
+    }
     // Simple AST walker to replace acorn-walk
     function walkFull(ast, visitor) {
         visitor(ast);
@@ -2976,7 +3002,7 @@
                 return;
             }
             if (node.type === "Identifier") {
-                node.name = encode(node.name);
+                node.name = encode$1(node.name);
                 // ensures the conversion is only done once
                 node.encoded = true;
             }
@@ -2992,7 +3018,7 @@
                 return;
             }
             if (node.type === "Identifier") {
-                node.name = decode(node.name);
+                node.name = decode$1(node.name);
                 // ensures the conversion is only done once
                 node.decoded = true;
             }
@@ -3148,12 +3174,14 @@
     exports.BasicEvaluator = BasicEvaluator;
     exports.ConductorError = ConductorError;
     exports.ConductorInternalError = ConductorInternalError;
+    exports.Control = Control;
     exports.EntryServiceMessage = EntryServiceMessage;
     exports.EvaluatorTypeError = EvaluatorTypeError;
     exports.HelloServiceMessage = HelloServiceMessage;
     exports.PluginServiceMessage = PluginServiceMessage;
     exports.SchemeComplexNumber = SchemeComplexNumber;
     exports.SchemeEvaluator = SchemeEvaluator;
+    exports.Stash = Stash;
     exports.conduit = conduit;
     exports.createProgramEnvironment = createProgramEnvironment;
     exports.decode = decode;
@@ -3166,4 +3194,6 @@
     exports.runnerPlugin = runnerPlugin;
     exports.unparse = unparse;
 
-}));
+    return exports;
+
+})({});
