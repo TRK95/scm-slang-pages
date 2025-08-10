@@ -1422,6 +1422,9 @@
             context.runtime.isRunning = true;
             context.stash = new Stash();
             context.control = new Control();
+            // Expose control and stash to runtime (like js-slang)
+            context.runtime.control = context.control;
+            context.runtime.stash = context.stash;
             // Initialize environment with primitives
             Object.entries(primitives).forEach(([name, func]) => {
                 context.environment.define(name, { type: "primitive", name, func });
@@ -1454,6 +1457,9 @@
             context.runtime.isRunning = true;
             context.stash = new Stash();
             context.control = new Control();
+            // Expose control and stash to runtime (like js-slang)
+            context.runtime.control = context.control;
+            context.runtime.stash = context.stash;
             // Initialize environment with primitives
             Object.entries(primitives).forEach(([name, func]) => {
                 context.environment.define(name, { type: "primitive", name, func });
