@@ -2889,7 +2889,11 @@
      * @param link The underlying communication link.
      * @returns The initialised `runnerPlugin` and `conduit`.
      */
-    function initialise(evaluatorClass, link = self) {
+    function initialise(evaluatorClass, link = (typeof self !== 'undefined' ? self : typeof global !== 'undefined' ? global : {
+        addEventListener: () => { },
+        postMessage: () => { },
+        onmessage: null
+    })) {
         const conduit = new Conduit(link, false);
         const runnerPlugin = conduit.registerPlugin(RunnerPlugin, evaluatorClass);
         return { runnerPlugin, conduit };
@@ -2898,7 +2902,6 @@
     // Simple AST walker to replace acorn-walk
     function walkFull(ast, visitor) {
         visitor(ast);
-        
         // Walk through all properties that might contain nodes
         for (const key in ast) {
             const value = ast[key];
@@ -2909,13 +2912,13 @@
                             walkFull(item, visitor);
                         }
                     });
-                } else if (value.type) {
+                }
+                else if (value.type) {
                     walkFull(value, visitor);
                 }
             }
         }
     }
-    
     // A function to modify all names in the estree program.
     // Prevents any name collisions with JS keywords and invalid characters.
     function estreeEncode(ast) {
