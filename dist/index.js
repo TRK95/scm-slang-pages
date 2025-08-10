@@ -2179,17 +2179,15 @@
             try {
                 // Parse the Scheme code using simple parser
                 const expressions = parseSchemeSimple(chunk);
-                // Reset context but keep the same environment
+                // Reset control and stash but keep the same environment
                 this.context.control = new Control();
                 this.context.stash = new Stash();
-                this.context.environment = this.environment; // Use persisted environment
                 this.context.runtime.isRunning = true;
                 // Evaluate the expressions
                 const result = evaluate(chunk, expressions, this.context);
-                // Send output to the conductor
+                // Send output to the conductor (like py-slang)
                 if (result.type === 'error') {
-                    const conductorError = new ConductorError(result.message);
-                    this.conductor.sendError(conductorError);
+                    this.conductor.sendOutput(`Error: ${result.message}`);
                 }
                 else {
                     // Send the result as output
@@ -2197,8 +2195,7 @@
                 }
             }
             catch (error) {
-                const conductorError = new ConductorError(error.message);
-                this.conductor.sendError(conductorError);
+                this.conductor.sendOutput(`Error: ${error instanceof Error ? error.message : error}`);
             }
         }
         valueToString(value) {
@@ -6599,6 +6596,7 @@
     exports.PluginServiceMessage = PluginServiceMessage;
     exports.SchemeComplexNumber = SchemeComplexNumber;
     exports.SchemeEvaluator = SchemeEvaluator;
+    exports.conduit = conduit;
     exports.createProgramEnvironment = createProgramEnvironment;
     exports.decode = decode;
     exports.encode = encode;
@@ -6607,6 +6605,7 @@
     exports.evaluate = evaluate;
     exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
+    exports.runnerPlugin = runnerPlugin;
     exports.schemeParse = schemeParse;
     exports.unparse = unparse;
 
