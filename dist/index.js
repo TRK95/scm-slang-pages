@@ -1911,7 +1911,17 @@
         else if (expr instanceof Atomic.Definition) {
             // Push the value to be evaluated, then the define instruction
             // The value will be evaluated first, then the define instruction will use the result
-            control.push(expr.value);
+            console.log('DEBUG: Definition - expr.value type:', expr.value.constructor.name);
+            console.log('DEBUG: Definition - expr.value:', expr.value);
+            // Ensure the value is evaluated first
+            if (expr.value instanceof Atomic.NumericLiteral) {
+                console.log('DEBUG: Pushing NumericLiteral value directly to stash');
+                stash.push({ type: 'number', value: parseFloat(expr.value.value) });
+            }
+            else {
+                console.log('DEBUG: Pushing value to control for evaluation');
+                control.push(expr.value);
+            }
             control.push(createDefineInstr(expr.name.name, expr.value));
         }
         else if (expr instanceof Atomic.Reassignment) {
