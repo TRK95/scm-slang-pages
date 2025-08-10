@@ -3188,5 +3188,6 @@
     exports.generateCSEMachineStateStream = generateCSEMachineStateStream;
     exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
+    exports.primitives = primitives;
 
 }));
