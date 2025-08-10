@@ -1925,6 +1925,7 @@
             control.push(createSetInstr(expr.name.name, expr.value));
         }
         else if (expr instanceof Atomic.Application) {
+            console.log('DEBUG: Evaluating Application with', expr.operands.length, 'operands');
             // Push the application instruction first (so it's executed last)
             control.push(createAppInstr(expr.operands.length, expr));
             // Push the operator (so it's evaluated before the instruction)
@@ -1935,6 +1936,7 @@
             }
         }
         else if (expr instanceof Atomic.Conditional) {
+            console.log('DEBUG: Evaluating Conditional expression');
             // Push test, consequent, alternate, then branch instruction
             control.push(expr.test);
             control.push(expr.consequent);
@@ -2031,16 +2033,19 @@
                 break;
             }
             case InstrType.APPLICATION: {
+                console.log('DEBUG: Executing APPLICATION instruction');
                 const appInstr = instruction;
                 const operator = stash.pop();
                 if (!operator)
                     throw new Error('No operator for application');
+                console.log('DEBUG: Operator:', operator);
                 const args = [];
                 for (let i = 0; i < appInstr.numOfArgs; i++) {
                     const arg = stash.pop();
                     if (arg)
                         args.unshift(arg);
                 }
+                console.log('DEBUG: Arguments:', args);
                 if (operator.type === 'closure') {
                     // Apply closure
                     const newEnv = createBlockEnvironment(operator.env);
@@ -2066,14 +2071,21 @@
                 break;
             }
             case InstrType.BRANCH: {
+                console.log('DEBUG: Executing BRANCH instruction');
                 const test = stash.pop();
-                if (!test)
+                if (!test) {
+                    console.error('DEBUG: No test value for branch - stash is empty');
+                    console.error('DEBUG: Stash size:', stash.size());
                     throw new Error('No test value for branch');
+                }
+                console.log('DEBUG: Test value:', test);
                 const branchInstr = instruction;
                 if (test.type === 'boolean' && test.value) {
+                    console.log('DEBUG: Taking consequent branch');
                     control.push(branchInstr.consequent);
                 }
                 else if (branchInstr.alternate) {
+                    console.log('DEBUG: Taking alternate branch');
                     control.push(branchInstr.alternate);
                 }
                 break;
