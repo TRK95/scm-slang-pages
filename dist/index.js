@@ -2163,10 +2163,11 @@
     class SchemeEvaluator extends BasicEvaluator {
         constructor(conductor) {
             super(conductor);
+            this.environment = createProgramEnvironment();
             this.context = {
                 control: new Control(),
                 stash: new Stash(),
-                environment: createProgramEnvironment(),
+                environment: this.environment,
                 runtime: {
                     isRunning: true
                 }
@@ -2176,6 +2177,11 @@
             try {
                 // Parse the Scheme code using simple parser
                 const expressions = parseSchemeSimple(chunk);
+                // Reset context but keep the same environment
+                this.context.control = new Control();
+                this.context.stash = new Stash();
+                this.context.environment = this.environment; // Use persisted environment
+                this.context.runtime.isRunning = true;
                 // Evaluate the expressions
                 const result = evaluate(chunk, expressions, this.context);
                 // Send output to the conductor
