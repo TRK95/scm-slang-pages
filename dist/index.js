@@ -1092,11 +1092,25 @@
             return new Extended.List(location, elements);
         }
         parseDefine(elements, location) {
-            if (elements.length !== 3) {
-                throw new Error('define requires exactly 2 arguments');
+            if (elements.length < 3) {
+                throw new Error('define requires at least 2 arguments');
             }
             const name = elements[1];
             const value = elements[2];
+            // Handle function definition: (define (func-name args) body)
+            if (name instanceof Extended.List && name.elements.length > 0) {
+                const funcName = name.elements[0];
+                if (!(funcName instanceof Atomic.Identifier)) {
+                    throw new Error('function name must be an identifier');
+                }
+                // Extract parameters
+                const params = name.elements.slice(1).filter(e => e instanceof Atomic.Identifier);
+                // Create lambda expression for the function body
+                const lambda = new Atomic.Lambda(location, value, params);
+                // Return definition with lambda as value
+                return new Atomic.Definition(location, funcName, lambda);
+            }
+            // Handle variable definition: (define name value)
             if (!(name instanceof Atomic.Identifier)) {
                 throw new Error('define name must be an identifier');
             }
