@@ -3154,15 +3154,8 @@
                 postMessage: () => { },
                 onmessage: null,
             })) {
-        // Skip conductor initialization in browser environment for now
-        // This is causing issues with postMessage
-        if (typeof window !== "undefined") {
-            // Return mock objects for browser
-            return {
-                runnerPlugin: {},
-                conduit: {},
-            };
-        }
+        // Try to initialize conductor even in browser environment
+        // This is needed for Source Academy integration
         const conduit = new Conduit(link, false);
         const runnerPlugin = conduit.registerPlugin(RunnerPlugin, evaluatorClass);
         return { runnerPlugin, conduit };
