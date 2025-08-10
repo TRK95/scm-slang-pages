@@ -6,7 +6,7 @@ This repository provides a GitHub Pages deployment of the SCM-Slang library for 
 
 ### Library URL for Source Academy
 ```
-https://nguyetanhlanghong.github.io/scm-slang-pages/dist/index.js
+https://trk95.github.io/scm-slang-pages/dist/index.js
 ```
 
 ### How to use in Source Academy Playground
@@ -24,14 +24,14 @@ https://nguyetanhlanghong.github.io/scm-slang-pages/dist/index.js
 
 ## 🧪 Testing
 
-Visit the demo page at: https://nguyetanhlanghong.github.io/scm-slang-pages/
+Visit the demo page at: https://trk95.github.io/scm-slang-pages/
 
 You can test the library by opening the browser console and running:
 
 ```javascript
 // Load the library
 const script = document.createElement('script');
-script.src = 'https://nguyetanhlanghong.github.io/scm-slang-pages/dist/index.js';
+script.src = 'https://trk95.github.io/scm-slang-pages/dist/index.js';
 document.head.appendChild(script);
 
 // After loading, you can test:
