@@ -2426,22 +2426,24 @@
         async evaluateChunk(chunk) {
             try {
                 const expressions = parseSchemeSimple(chunk);
-                // Use stepper-enabled evaluation
-                const result = await evaluateWithStepper(chunk, expressions, this.context, {
-                    isPrelude: false,
-                    envSteps: 100000,
-                    stepLimit: 100000,
-                });
-                if (result.status === 'finished') {
-                    if (result.value && result.value.type === 'error') {
-                        this.conductor.sendOutput(`Error: ${result.value.message}`);
+                // Reset control and stash but keep the same environment
+                this.context.control = new Control();
+                this.context.stash = new Stash();
+                this.context.runtime.isRunning = true;
+                // Evaluate the expressions using the same pattern as py-slang
+                const result = evaluate(chunk, expressions, this.context);
+                // Use CSEResultPromise to handle the result
+                const promiseResult = await CSEResultPromise(this.context, result);
+                if (promiseResult.status === 'finished') {
+                    if (promiseResult.value && promiseResult.value.type === 'error') {
+                        this.conductor.sendOutput(`Error: ${promiseResult.value.message}`);
                     }
-                    else if (result.value && result.value.type === 'void') {
+                    else if (promiseResult.value && promiseResult.value.type === 'void') {
                         // Don't output anything for void values (like define statements)
                         this.conductor.sendOutput('');
                     }
                     else {
-                        this.conductor.sendOutput(this.formatValue(result.value));
+                        this.conductor.sendOutput(this.formatValue(promiseResult.value));
                     }
                 }
             }
@@ -3191,6 +3193,7 @@
     exports.evaluate = evaluate;
     exports.evaluateWithStepper = evaluateWithStepper;
     exports.generateCSEMachineStateStream = generateCSEMachineStateStream;
+    exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
 
 }));
