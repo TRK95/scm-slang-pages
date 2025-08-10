@@ -58,13 +58,15 @@
     this.evaluate = evaluate;
   }
   
-  // Export functions to global scope
-  window.parseSchemeSimple = parseSchemeSimple;
-  window.evaluate = evaluate;
-  window.createProgramEnvironment = createProgramEnvironment;
-  window.SchemeComplexNumber = SchemeComplexNumber;
-  window.SchemeEvaluator = SchemeEvaluator;
-  window.BasicEvaluator = BasicEvaluator;
+  // Export functions to global scope (only in browser environment)
+  if (typeof window !== 'undefined') {
+    window.parseSchemeSimple = parseSchemeSimple;
+    window.evaluate = evaluate;
+    window.createProgramEnvironment = createProgramEnvironment;
+    window.SchemeComplexNumber = SchemeComplexNumber;
+    window.SchemeEvaluator = SchemeEvaluator;
+    window.BasicEvaluator = BasicEvaluator;
+  }
   
   // Also export as UMD module
   if (typeof module !== 'undefined' && module.exports) {
@@ -89,5 +91,8 @@
     });
   }
   
-  console.log('SCM-Slang loaded successfully!');
+  // Log success only in browser environment
+  if (typeof console !== 'undefined') {
+    console.log('SCM-Slang loaded successfully!');
+  }
 })();
