@@ -1907,6 +1907,42 @@
         }
     }
 
+    class Context {
+        constructor() {
+            this.errors = [];
+            this.createEmptyRuntime = () => ({
+                break: false,
+                debuggerOn: true,
+                isRunning: false,
+                control: null,
+                stash: null,
+                objectCount: 0,
+                envStepsTotal: 0,
+                breakpointSteps: [],
+                changepointSteps: []
+            });
+            this.control = new Control();
+            this.stash = new Stash();
+            this.environment = createProgramEnvironment();
+            this.runtime = this.createEmptyRuntime();
+        }
+        reset() {
+            this.control = new Control();
+            this.stash = new Stash();
+            this.environment = createProgramEnvironment();
+            this.errors = [];
+        }
+        copy() {
+            const newContext = new Context();
+            newContext.control = this.control.copy();
+            newContext.stash = new Stash(); // Stash doesn't have copy method
+            newContext.environment = this.environment.clone();
+            newContext.errors = [...this.errors];
+            newContext.runtime = { ...this.runtime };
+            return newContext;
+        }
+    }
+
     function parseSchemeSimple(code) {
         const tokens = tokenize(code);
         const parser = new SimpleSchemeParser(tokens);
@@ -3185,6 +3221,7 @@
     }
 
     exports.CSEResultPromise = CSEResultPromise;
+    exports.Context = Context;
     exports.Control = Control;
     exports.SchemeEvaluator = SchemeEvaluator;
     exports.Stash = Stash;
