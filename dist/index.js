@@ -3189,6 +3189,7 @@
     exports.SchemeEvaluator = SchemeEvaluator;
     exports.Stash = Stash;
     exports.createProgramEnvironment = createProgramEnvironment;
+    exports.cseMachineStepper = generateCSEMachineStateStream;
     exports.evaluate = evaluate;
     exports.evaluateWithStepper = evaluateWithStepper;
     exports.generateCSEMachineStateStream = generateCSEMachineStateStream;
