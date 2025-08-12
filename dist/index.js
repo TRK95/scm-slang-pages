@@ -1938,7 +1938,7 @@
     function evaluateControlItem(item, context, control, stash) {
         if (isInstr(item)) {
             console.log("DEBUG: Evaluating instruction:", item.instrType);
-            evaluateInstruction(item, context, control, stash);
+            evaluateInstruction$1(item, context, control, stash);
         }
         else if (isStatementSequence(item)) {
             // Handle StatementSequence by pushing all expressions in reverse order
@@ -2089,7 +2089,7 @@
             throw new Error(`Unsupported expression type: ${expr.constructor.name}`);
         }
     }
-    function evaluateInstruction(instruction, context, control, stash) {
+    function evaluateInstruction$1(instruction, context, control, stash) {
         switch (instruction.instrType) {
             case InstrType.DEFINE: {
                 const value = stash.pop();
@@ -3876,6 +3876,165 @@
         }
     }
 
+    /**
+     * Generate CSE machine steps for visualization
+     * Based on js-slang's generateCSEMachineStateStream
+     */
+    function* generateCSEMachineStateStream(code, context, control, stash, envSteps, stepLimit, isPrelude = false) {
+        context.runtime.isRunning = true;
+        context.runtime.nodes = [];
+        let steps = 0;
+        let command = control.peek();
+        // Push first node to be evaluated into context
+        if (command !== undefined && isNode(command)) {
+            context.runtime.nodes.unshift(command);
+        }
+        while (command !== undefined) {
+            // Return to capture a snapshot after target step count
+            if (!isPrelude && steps === envSteps) {
+                yield { stash, control, steps };
+                return;
+            }
+            // Step limit reached, stop further evaluation
+            if (!isPrelude && steps === stepLimit) {
+                break;
+            }
+            control.pop();
+            if (isNode(command)) {
+                context.runtime.nodes.shift();
+                context.runtime.nodes.unshift(command);
+                // Evaluate the node
+                evaluateNode(command, context, control, stash);
+            }
+            else {
+                // Command is an instruction
+                evaluateInstruction(command, context, control, stash);
+            }
+            command = control.peek();
+            steps += 1;
+            if (!isPrelude) {
+                context.runtime.envStepsTotal = steps;
+            }
+            yield { stash, control, steps };
+        }
+    }
+    /**
+     * Check if a command is a node
+     */
+    function isNode(command) {
+        return command && typeof command === 'object' && 'type' in command;
+    }
+    /**
+     * Evaluate a node
+     */
+    function evaluateNode(node, context, control, stash, isPrelude) {
+        // Simple evaluation - push value to stash
+        if (node.type === 'NumericLiteral') {
+            stash.push({ type: 'number', value: node.value });
+        }
+        else if (node.type === 'StringLiteral') {
+            stash.push({ type: 'string', value: node.value });
+        }
+        else if (node.type === 'BooleanLiteral') {
+            stash.push({ type: 'boolean', value: node.value });
+        }
+        else if (node.type === 'Identifier') {
+            const value = context.environment.get(node.name);
+            stash.push(value);
+        }
+        else {
+            // For other nodes, push to control for further evaluation
+            control.push(node);
+        }
+    }
+    /**
+     * Evaluate an instruction
+     */
+    function evaluateInstruction(instr, context, control, stash, isPrelude) {
+        // Handle different instruction types
+        if (instr.instrType === 'Define') {
+            const value = stash.pop();
+            context.environment.set(instr.name, value);
+        }
+        else if (instr.instrType === 'Application') {
+            // Handle function application
+            const args = [];
+            for (let i = 0; i < instr.operands.length; i++) {
+                args.unshift(stash.pop());
+            }
+            const func = stash.pop();
+            if (func && typeof func === 'function') {
+                try {
+                    const result = func(...args);
+                    stash.push(result);
+                }
+                catch (error) {
+                    stash.push({ type: 'error', message: error.message });
+                }
+            }
+            else {
+                stash.push({ type: 'error', message: 'Not a function' });
+            }
+        }
+    }
+    /**
+     * Generate CSE machine steps for visualization
+     */
+    function generateCSESteps(code, maxSteps = 1000) {
+        const steps = [];
+        try {
+            // Parse the code
+            const expressions = parseSchemeSimple(code);
+            // Create context
+            const environment = createProgramEnvironment();
+            const context = {
+                control: new Control(),
+                stash: new Stash(),
+                environment,
+                runtime: {
+                    isRunning: true,
+                    envStepsTotal: 0,
+                    breakpointSteps: [],
+                    changepointSteps: [],
+                    nodes: []
+                }
+            };
+            // Add initial state
+            steps.push({
+                control: [],
+                stash: [],
+                environment: {},
+                explanation: 'Initial state'
+            });
+            // Generate steps using the stream
+            const stream = generateCSEMachineStateStream(code, context, context.control, context.stash, -1, maxSteps, false);
+            for (const state of stream) {
+                steps.push({
+                    control: state.control.getStack(),
+                    stash: state.stash.getValues(),
+                    environment: {},
+                    explanation: `Step ${state.steps}`
+                });
+            }
+        }
+        catch (error) {
+            steps.push({
+                control: [],
+                stash: [],
+                environment: {},
+                explanation: `Error: ${error.message}`
+            });
+        }
+        return steps;
+    }
+    /**
+     * Get CSE machine state at a specific step
+     */
+    function getCSEStateAtStep(code, stepNumber) {
+        const steps = generateCSESteps(code, stepNumber + 1);
+        return steps[stepNumber] || null;
+    }
+
     // Import for internal use
     // Import js-base64 functions directly
     const b64Encode = (str) => btoa(unescape(encodeURIComponent(str)));
@@ -3973,9 +4132,6 @@
         exports.runnerPlugin = {};
         exports.conduit = {};
     }
-    // Export CSE machine stepper functionality (temporarily disabled)
-    // export { generateCSESteps, getCSEStateAtStep } from './CSE-machine/stepper'
-    // export type { CSEStep } from './CSE-machine/stepper'
 
     exports.BasicEvaluator = BasicEvaluator;
     exports.Control = Control;
@@ -3991,6 +4147,9 @@
     exports.estreeEncode = estreeEncode;
     exports.evaluate = evaluate;
     exports.explainStep = explainStep;
+    exports.generateCSEMachineStateStream = generateCSEMachineStateStream;
+    exports.generateCSESteps = generateCSESteps;
+    exports.getCSEStateAtStep = getCSEStateAtStep;
     exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
     exports.step = step;
