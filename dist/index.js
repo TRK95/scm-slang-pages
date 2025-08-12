@@ -4105,6 +4105,28 @@
         exports.runnerPlugin = {};
         exports.conduit = {};
     }
+    // Expose to global scope for Source Academy integration
+    if (typeof window !== 'undefined') {
+        // Create ScmSlangRunner object
+        window.ScmSlangRunner = {
+            // CSE Machine Stepper functions
+            generateCSESteps,
+            getCSEStateAtStep,
+            generateCSEMachineStateStream,
+            // Tracer functions
+            step,
+            stepExpression,
+            explainStep,
+            convert,
+            convertList,
+            // Core evaluation functions
+            evaluate,
+            parseSchemeSimple,
+            createProgramEnvironment
+        };
+        console.log('✅ ScmSlangRunner exposed to global scope');
+        console.log('Available methods:', Object.keys(window.ScmSlangRunner));
+    }
 
     exports.BasicEvaluator = BasicEvaluator;
     exports.Control = Control;
