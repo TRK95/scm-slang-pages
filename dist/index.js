@@ -1363,6 +1363,11 @@
         getValues() {
             return [...this.values];
         }
+        copy() {
+            const newStash = new Stash();
+            newStash.values = [...this.values];
+            return newStash;
+        }
     }
 
     function createEnvironment(name, parent = null) {
@@ -1858,16 +1863,10 @@
             return { type: "boolean", value: value.type === "nil" };
         },
         "pair?": (value) => {
-            return {
-                type: "boolean",
-                value: value.type === "pair" || value.type === "list",
-            };
+            return { type: "boolean", value: value.type === "pair" || value.type === "list" };
         },
         "list?": (value) => {
-            return {
-                type: "boolean",
-                value: value.type === "list" || value.type === "nil",
-            };
+            return { type: "boolean", value: value.type === "list" || value.type === "nil" };
         },
         "number?": (value) => {
             return { type: "boolean", value: value.type === "number" };
@@ -3233,6 +3232,650 @@
         }
     }
 
+    class StepperLiteral {
+        constructor(value, raw) {
+            this.value = value;
+            this.raw = raw;
+            this.type = 'Literal';
+        }
+        static create(value, raw) {
+            return new StepperLiteral(value, raw);
+        }
+        isContractible() {
+            return true;
+        }
+        isOneStepPossible() {
+            return false;
+        }
+        contract() {
+            return this;
+        }
+        oneStep() {
+            return this;
+        }
+        substitute(id, value) {
+            return this;
+        }
+        freeNames() {
+            return [];
+        }
+        allNames() {
+            return [];
+        }
+        rename(before, after) {
+            return this;
+        }
+        toString() {
+            if (this.raw) {
+                return this.raw;
+            }
+            if (typeof this.value === 'string') {
+                return `"${this.value}"`;
+            }
+            if (this.value === null || this.value === undefined) {
+                return '()';
+            }
+            return String(this.value);
+        }
+    }
+
+    class StepperIdentifier {
+        constructor(name) {
+            this.name = name;
+            this.type = 'Identifier';
+        }
+        static create(name) {
+            return new StepperIdentifier(name);
+        }
+        isContractible() {
+            return true;
+        }
+        isOneStepPossible() {
+            return false;
+        }
+        contract() {
+            return this;
+        }
+        oneStep() {
+            return this;
+        }
+        substitute(id, value) {
+            if (this.name === id.name) {
+                return value;
+            }
+            return this;
+        }
+        freeNames() {
+            return [this.name];
+        }
+        allNames() {
+            return [this.name];
+        }
+        rename(before, after) {
+            if (this.name === before) {
+                return new StepperIdentifier(after);
+            }
+            return this;
+        }
+        toString() {
+            return this.name;
+        }
+    }
+
+    class StepperFunctionApplication {
+        constructor(operator, operands) {
+            this.operator = operator;
+            this.operands = operands;
+            this.type = 'FunctionApplication';
+        }
+        static create(operator, operands) {
+            return new StepperFunctionApplication(operator, operands);
+        }
+        isContractible() {
+            // Check if this is a built-in function with contractible operands
+            if (this.operator instanceof StepperIdentifier) {
+                const funcName = this.operator.name;
+                const isBuiltin = ['+', '-', '*', '/', '>', '<', '>=', '<=', '='].includes(funcName);
+                if (isBuiltin && this.operands.length === 2) {
+                    return this.operands[0].isContractible() && this.operands[1].isContractible();
+                }
+            }
+            return false;
+        }
+        isOneStepPossible() {
+            // Check if any operand can be reduced
+            return this.operands.some(operand => !operand.isContractible());
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error('Cannot contract non-contractible function application');
+            }
+            // Handle built-in functions
+            if (this.operator instanceof StepperIdentifier) {
+                const funcName = this.operator.name;
+                const leftValue = this.operands[0].value;
+                const rightValue = this.operands[1].value;
+                let result;
+                switch (funcName) {
+                    case '+':
+                        result = leftValue + rightValue;
+                        break;
+                    case '-':
+                        result = leftValue - rightValue;
+                        break;
+                    case '*':
+                        result = leftValue * rightValue;
+                        break;
+                    case '/':
+                        result = leftValue / rightValue;
+                        break;
+                    case '>':
+                        result = leftValue > rightValue;
+                        break;
+                    case '<':
+                        result = leftValue < rightValue;
+                        break;
+                    case '>=':
+                        result = leftValue >= rightValue;
+                        break;
+                    case '<=':
+                        result = leftValue <= rightValue;
+                        break;
+                    case '=':
+                        result = leftValue === rightValue;
+                        break;
+                    default:
+                        return new StepperLiteral(undefined, 'undefined');
+                }
+                return new StepperLiteral(result);
+            }
+            return new StepperLiteral(undefined, 'undefined');
+        }
+        oneStep() {
+            if (this.isContractible()) {
+                throw new Error('Expression is contractible, use contract() instead');
+            }
+            // Find the first operand that can be reduced
+            for (let i = 0; i < this.operands.length; i++) {
+                if (!this.operands[i].isContractible()) {
+                    const newOperands = [...this.operands];
+                    newOperands[i] = newOperands[i].oneStep();
+                    return new StepperFunctionApplication(this.operator, newOperands);
+                }
+            }
+            throw new Error('Cannot step further');
+        }
+        substitute(id, value) {
+            return new StepperFunctionApplication(this.operator.substitute(id, value), this.operands.map(operand => operand.substitute(id, value)));
+        }
+        freeNames() {
+            return [
+                ...this.operator.freeNames(),
+                ...this.operands.flatMap(operand => operand.freeNames())
+            ];
+        }
+        allNames() {
+            return [
+                ...this.operator.allNames(),
+                ...this.operands.flatMap(operand => operand.allNames())
+            ];
+        }
+        rename(before, after) {
+            return new StepperFunctionApplication(this.operator.rename(before, after), this.operands.map(operand => operand.rename(before, after)));
+        }
+        toString() {
+            const operandsStr = this.operands.map(op => op.toString()).join(' ');
+            return `(${this.operator.toString()} ${operandsStr})`;
+        }
+    }
+
+    class StepperConditionalExpression {
+        constructor(test, consequent, alternate) {
+            this.test = test;
+            this.consequent = consequent;
+            this.alternate = alternate;
+            this.type = 'ConditionalExpression';
+        }
+        static create(test, consequent, alternate) {
+            return new StepperConditionalExpression(test, consequent, alternate);
+        }
+        isContractible() {
+            return this.test.isContractible();
+        }
+        isOneStepPossible() {
+            return !this.test.isContractible();
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error('Cannot contract non-contractible conditional expression');
+            }
+            const testValue = this.test.value;
+            // In Scheme, only #f is false, everything else is true
+            if (testValue === false) {
+                return this.alternate;
+            }
+            else {
+                return this.consequent;
+            }
+        }
+        oneStep() {
+            if (this.isContractible()) {
+                throw new Error('Expression is contractible, use contract() instead');
+            }
+            return new StepperConditionalExpression(this.test.oneStep(), this.consequent, this.alternate);
+        }
+        substitute(id, value) {
+            return new StepperConditionalExpression(this.test.substitute(id, value), this.consequent.substitute(id, value), this.alternate.substitute(id, value));
+        }
+        freeNames() {
+            return [
+                ...this.test.freeNames(),
+                ...this.consequent.freeNames(),
+                ...this.alternate.freeNames()
+            ];
+        }
+        allNames() {
+            return [
+                ...this.test.allNames(),
+                ...this.consequent.allNames(),
+                ...this.alternate.allNames()
+            ];
+        }
+        rename(before, after) {
+            return new StepperConditionalExpression(this.test.rename(before, after), this.consequent.rename(before, after), this.alternate.rename(before, after));
+        }
+        toString() {
+            return `(if ${this.test.toString()} ${this.consequent.toString()} ${this.alternate.toString()})`;
+        }
+    }
+
+    class StepperLambdaExpression {
+        constructor(params, body) {
+            this.params = params;
+            this.body = body;
+            this.type = 'LambdaExpression';
+        }
+        static create(params, body) {
+            return new StepperLambdaExpression(params, body);
+        }
+        isContractible() {
+            return true; // Lambda expressions are irreducible
+        }
+        isOneStepPossible() {
+            return false;
+        }
+        contract() {
+            return this;
+        }
+        oneStep() {
+            return this;
+        }
+        substitute(id, value) {
+            // Don't substitute if the variable is bound by this lambda
+            if (this.params.some(param => param.name === id.name)) {
+                return this;
+            }
+            return new StepperLambdaExpression(this.params, this.body.substitute(id, value));
+        }
+        freeNames() {
+            const paramNames = this.params.map(param => param.name);
+            return this.body.freeNames().filter((name) => !paramNames.includes(name));
+        }
+        allNames() {
+            const paramNames = this.params.map(param => param.name);
+            return [...paramNames, ...this.body.allNames()];
+        }
+        rename(before, after) {
+            // Rename parameters if they match
+            const newParams = this.params.map(param => param.name === before ? new StepperIdentifier(after) : param);
+            return new StepperLambdaExpression(newParams, this.body.rename(before, after));
+        }
+        toString() {
+            const paramsStr = this.params.map(param => param.toString()).join(' ');
+            return `(lambda (${paramsStr}) ${this.body.toString()})`;
+        }
+    }
+
+    class StepperListExpression {
+        constructor(elements) {
+            this.elements = elements;
+            this.type = 'ListExpression';
+        }
+        static create(elements) {
+            return new StepperListExpression(elements);
+        }
+        isContractible() {
+            return this.elements.every(element => element.isContractible());
+        }
+        isOneStepPossible() {
+            return this.elements.some(element => !element.isContractible());
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error('Cannot contract non-contractible list expression');
+            }
+            // For now, return a simple representation
+            return new StepperLiteral(this.elements, this.toString());
+        }
+        oneStep() {
+            if (this.isContractible()) {
+                throw new Error('Expression is contractible, use contract() instead');
+            }
+            // Find the first element that can be reduced
+            for (let i = 0; i < this.elements.length; i++) {
+                if (!this.elements[i].isContractible()) {
+                    const newElements = [...this.elements];
+                    newElements[i] = newElements[i].oneStep();
+                    return new StepperListExpression(newElements);
+                }
+            }
+            throw new Error('Cannot step further');
+        }
+        substitute(id, value) {
+            return new StepperListExpression(this.elements.map(element => element.substitute(id, value)));
+        }
+        freeNames() {
+            return this.elements.flatMap(element => element.freeNames());
+        }
+        allNames() {
+            return this.elements.flatMap(element => element.allNames());
+        }
+        rename(before, after) {
+            return new StepperListExpression(this.elements.map(element => element.rename(before, after)));
+        }
+        toString() {
+            const elementsStr = this.elements.map(element => element.toString()).join(' ');
+            return `(${elementsStr})`;
+        }
+    }
+
+    class StepperPairExpression {
+        constructor(car, cdr) {
+            this.car = car;
+            this.cdr = cdr;
+            this.type = 'PairExpression';
+        }
+        static create(car, cdr) {
+            return new StepperPairExpression(car, cdr);
+        }
+        isContractible() {
+            return this.car.isContractible() && this.cdr.isContractible();
+        }
+        isOneStepPossible() {
+            return !this.car.isContractible() || !this.cdr.isContractible();
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error('Cannot contract non-contractible pair expression');
+            }
+            // For now, return a simple representation
+            return new StepperLiteral([this.car, this.cdr], this.toString());
+        }
+        oneStep() {
+            if (this.isContractible()) {
+                throw new Error('Expression is contractible, use contract() instead');
+            }
+            if (!this.car.isContractible()) {
+                return new StepperPairExpression(this.car.oneStep(), this.cdr);
+            }
+            if (!this.cdr.isContractible()) {
+                return new StepperPairExpression(this.car, this.cdr.oneStep());
+            }
+            throw new Error('Cannot step further');
+        }
+        substitute(id, value) {
+            return new StepperPairExpression(this.car.substitute(id, value), this.cdr.substitute(id, value));
+        }
+        freeNames() {
+            return [...this.car.freeNames(), ...this.cdr.freeNames()];
+        }
+        allNames() {
+            return [...this.car.allNames(), ...this.cdr.allNames()];
+        }
+        rename(before, after) {
+            return new StepperPairExpression(this.car.rename(before, after), this.cdr.rename(before, after));
+        }
+        toString() {
+            return `(${this.car.toString()} . ${this.cdr.toString()})`;
+        }
+    }
+
+    class StepperProgram {
+        constructor(body) {
+            this.body = body;
+            this.type = 'Program';
+        }
+        static create(body) {
+            return new StepperProgram(body);
+        }
+        isContractible() {
+            return this.body.every(expression => expression.isContractible());
+        }
+        isOneStepPossible() {
+            return this.body.some(expression => !expression.isContractible());
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error('Cannot contract non-contractible program');
+            }
+            // Return the last expression
+            return this.body[this.body.length - 1];
+        }
+        oneStep() {
+            if (this.isContractible()) {
+                throw new Error('Program is contractible, use contract() instead');
+            }
+            // Find the first expression that can be reduced
+            for (let i = 0; i < this.body.length; i++) {
+                if (!this.body[i].isContractible()) {
+                    const newBody = [...this.body];
+                    newBody[i] = newBody[i].oneStep();
+                    return new StepperProgram(newBody);
+                }
+            }
+            throw new Error('Cannot step further');
+        }
+        substitute(id, value) {
+            return new StepperProgram(this.body.map(expression => expression.substitute(id, value)));
+        }
+        freeNames() {
+            return this.body.flatMap(expression => expression.freeNames());
+        }
+        allNames() {
+            return this.body.flatMap(expression => expression.allNames());
+        }
+        rename(before, after) {
+            return new StepperProgram(this.body.map(expression => expression.rename(before, after)));
+        }
+        toString() {
+            return this.body.map(expression => expression.toString()).join('\n');
+        }
+    }
+
+    class StepperVariableDeclaration {
+        constructor(id, init) {
+            this.id = id;
+            this.init = init;
+            this.type = 'VariableDeclaration';
+        }
+        static create(id, init) {
+            return new StepperVariableDeclaration(id, init);
+        }
+        isContractible() {
+            return this.init.isContractible();
+        }
+        isOneStepPossible() {
+            return !this.init.isContractible();
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error('Cannot contract non-contractible variable declaration');
+            }
+            // Return the initial value
+            return this.init;
+        }
+        oneStep() {
+            if (this.isContractible()) {
+                throw new Error('Variable declaration is contractible, use contract() instead');
+            }
+            return new StepperVariableDeclaration(this.id, this.init.oneStep());
+        }
+        substitute(id, value) {
+            // Don't substitute if the variable name matches this declaration
+            if (this.id.name === id.name) {
+                return this;
+            }
+            return new StepperVariableDeclaration(this.id, this.init.substitute(id, value));
+        }
+        freeNames() {
+            // The declared variable is not free in its own declaration
+            return this.init.freeNames().filter((name) => name !== this.id.name);
+        }
+        allNames() {
+            return [this.id.name, ...this.init.allNames()];
+        }
+        rename(before, after) {
+            const newId = this.id.name === before ? new StepperIdentifier(after) : this.id;
+            return new StepperVariableDeclaration(newId, this.init.rename(before, after));
+        }
+        toString() {
+            return `(define ${this.id.toString()} ${this.init.toString()})`;
+        }
+    }
+
+    const nodeConverters = {
+        NumericLiteral: (node) => StepperLiteral.create(Number(node.value)),
+        StringLiteral: (node) => StepperLiteral.create(node.value, `"${node.value}"`),
+        BooleanLiteral: (node) => StepperLiteral.create(node.value, node.value ? '#t' : '#f'),
+        Symbol: (node) => StepperLiteral.create(node.value, `'${node.value}`),
+        Nil: (node) => StepperLiteral.create(null, '()'),
+        Identifier: (node) => StepperIdentifier.create(node.name),
+        Application: (node) => {
+            // Handle function applications
+            return StepperFunctionApplication.create(convert(node.operator), node.operands.map(convert));
+        },
+        Conditional: (node) => {
+            return StepperConditionalExpression.create(convert(node.test), convert(node.consequent), convert(node.alternate));
+        },
+        Lambda: (node) => {
+            const params = node.params.map((param) => param instanceof Atomic.Identifier ? StepperIdentifier.create(param.name) : StepperIdentifier.create('param'));
+            return StepperLambdaExpression.create(params, convert(node.body));
+        },
+        List: (node) => {
+            return StepperListExpression.create(node.elements.map(convert));
+        },
+        Pair: (node) => {
+            return StepperPairExpression.create(convert(node.car), convert(node.cdr));
+        },
+        Program: (node) => {
+            return StepperProgram.create(node.body.map(convert));
+        },
+        Definition: (node) => {
+            return StepperVariableDeclaration.create(StepperIdentifier.create(node.name), convert(node.value));
+        }
+    };
+    function convert(node) {
+        const nodeType = node.constructor.name;
+        const converter = nodeConverters[nodeType];
+        if (converter) {
+            return converter(node);
+        }
+        // Default fallback
+        return StepperLiteral.create('undefined', 'undefined');
+    }
+    // Helper function to convert a list of expressions
+    function convertList(expressions) {
+        return expressions.map(convert);
+    }
+
+    /**
+     * Main stepper function that reduces a Scheme expression step by step
+     */
+    function step(expressions, maxSteps = 1000) {
+        const steps = [];
+        // Convert all expressions to stepper nodes
+        const stepperNodes = expressions.map(convert);
+        // If we have multiple expressions, create a program
+        let currentAst;
+        if (stepperNodes.length > 1) {
+            currentAst = new StepperProgram(stepperNodes);
+            steps.push({
+                ast: currentAst,
+                explanation: 'Initial program with multiple expressions'
+            });
+        }
+        else {
+            currentAst = stepperNodes[0];
+            steps.push({
+                ast: currentAst,
+                explanation: 'Initial expression'
+            });
+        }
+        let stepCount = 0;
+        while (currentAst.isOneStepPossible() && stepCount < maxSteps) {
+            stepCount++;
+            try {
+                currentAst = currentAst.oneStep();
+                steps.push({
+                    ast: currentAst,
+                    explanation: `Step ${stepCount}: Reduced expression`
+                });
+            }
+            catch (error) {
+                steps.push({
+                    ast: currentAst,
+                    explanation: `Step ${stepCount}: Error - ${error.message}`
+                });
+                break;
+            }
+        }
+        // If we can contract the final expression, do it
+        if (currentAst.isContractible() && stepCount < maxSteps) {
+            try {
+                const contracted = currentAst.contract();
+                if (contracted !== currentAst) {
+                    steps.push({
+                        ast: contracted,
+                        explanation: `Final step: Contracted to result`
+                    });
+                }
+            }
+            catch (error) {
+                steps.push({
+                    ast: currentAst,
+                    explanation: `Final step: Error during contraction - ${error.message}`
+                });
+            }
+        }
+        return steps;
+    }
+    /**
+     * Step through a single expression
+     */
+    function stepExpression(expression, maxSteps = 1000) {
+        return step([expression], maxSteps);
+    }
+    /**
+     * Get explanation for a step
+     */
+    function explainStep(step) {
+        if (step.explanation) {
+            return step.explanation;
+        }
+        // Generate explanation based on AST type
+        const ast = step.ast;
+        switch (ast.type) {
+            case 'Literal':
+                return `Evaluated to literal value: ${ast.toString()}`;
+            case 'BinaryExpression':
+                return `Evaluated binary expression: ${ast.toString()}`;
+            case 'Identifier':
+                return `Variable reference: ${ast.toString()}`;
+            default:
+                return `Processed ${ast.type}`;
+        }
+    }
+
     // Import for internal use
     // Import js-base64 functions directly
     const b64Encode = (str) => btoa(unescape(encodeURIComponent(str)));
@@ -3330,20 +3973,28 @@
         exports.runnerPlugin = {};
         exports.conduit = {};
     }
+    // Export CSE machine stepper functionality (temporarily disabled)
+    // export { generateCSESteps, getCSEStateAtStep } from './CSE-machine/stepper'
+    // export type { CSEStep } from './CSE-machine/stepper'
 
     exports.BasicEvaluator = BasicEvaluator;
     exports.Control = Control;
     exports.SchemeComplexNumber = SchemeComplexNumber;
     exports.SchemeEvaluator = SchemeEvaluator;
     exports.Stash = Stash;
+    exports.convert = convert;
+    exports.convertList = convertList;
     exports.createProgramEnvironment = createProgramEnvironment;
     exports.decode = decode;
     exports.encode = encode;
     exports.estreeDecode = estreeDecode;
     exports.estreeEncode = estreeEncode;
     exports.evaluate = evaluate;
+    exports.explainStep = explainStep;
     exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
+    exports.step = step;
+    exports.stepExpression = stepExpression;
     exports.unparse = unparse;
 
 }));
