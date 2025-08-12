@@ -1,8 +1,5 @@
-(function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
-    typeof define === 'function' && define.amd ? define(['exports'], factory) :
-    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.ScmSlangRunner = {}));
-})(this, (function (exports) { 'use strict';
+var ScmSlangRunner = (function (exports) {
+    'use strict';
 
     // This file is adapted from:
     // https://github.com/source-academy/conductor
@@ -4151,4 +4148,6 @@
     exports.stepExpression = stepExpression;
     exports.unparse = unparse;
 
-}));
+    return exports;
+
+})({});
