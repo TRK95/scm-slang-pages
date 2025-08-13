@@ -1,5 +1,8 @@
-var ScmSlangRunner = (function (exports) {
-    'use strict';
+(function (global, factory) {
+    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
+    typeof define === 'function' && define.amd ? define(['exports'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.ScmSlangRunner = {}));
+})(this, (function (exports) { 'use strict';
 
     /**
      * Node types of the abstract syntax tree of the Scheme Language.
@@ -1304,11 +1307,6 @@ var ScmSlangRunner = (function (exports) {
         getValues() {
             return [...this.values];
         }
-        copy() {
-            const newStash = new Stash();
-            newStash.values = [...this.values];
-            return newStash;
-        }
     }
 
     function createEnvironment(name, parent = null) {
@@ -1804,10 +1802,16 @@ var ScmSlangRunner = (function (exports) {
             return { type: "boolean", value: value.type === "nil" };
         },
         "pair?": (value) => {
-            return { type: "boolean", value: value.type === "pair" || value.type === "list" };
+            return {
+                type: "boolean",
+                value: value.type === "pair" || value.type === "list",
+            };
         },
         "list?": (value) => {
-            return { type: "boolean", value: value.type === "list" || value.type === "nil" };
+            return {
+                type: "boolean",
+                value: value.type === "list" || value.type === "nil",
+            };
         },
         "number?": (value) => {
             return { type: "boolean", value: value.type === "number" };
@@ -2980,10 +2984,36 @@ var ScmSlangRunner = (function (exports) {
         return steps;
     }
     /**
-     * Step through a single expression
+     * Step through a single expression or code string
      */
     function stepExpression(expression, maxSteps = 1000) {
+        if (typeof expression === 'string') {
+            return stepCode(expression, maxSteps);
+        }
         return step([expression], maxSteps);
+    }
+    /**
+     * Step through a Scheme code string
+     */
+    function stepCode(code, maxSteps = 1000) {
+        try {
+            // Import parseSchemeSimple dynamically to avoid circular dependency
+            const { parseSchemeSimple } = require('../CSE-machine/simple-parser');
+            const expressions = parseSchemeSimple(code);
+            if (expressions.length === 0) {
+                return [{
+                        ast: { type: 'Literal', value: 'undefined', raw: 'undefined', toString: () => 'undefined' },
+                        explanation: 'No expressions found in code'
+                    }];
+            }
+            return step(expressions, maxSteps);
+        }
+        catch (error) {
+            return [{
+                    ast: { type: 'Literal', value: 'error', raw: 'error', toString: () => 'error' },
+                    explanation: `Error parsing code: ${error.message}`
+                }];
+        }
     }
     /**
      * Get explanation for a step
@@ -3126,6 +3156,86 @@ var ScmSlangRunner = (function (exports) {
     // This file is adapted from:
     // https://github.com/source-academy/conductor
     // Original author(s): Source Academy Team
+    class Channel {
+        send(message, transfer) {
+            this.__verifyAlive();
+            this.__port.postMessage(message, transfer ?? []);
+        }
+        subscribe(subscriber) {
+            this.__verifyAlive();
+            this.__subscribers.add(subscriber);
+            if (this.__waitingMessages) {
+                for (const data of this.__waitingMessages) {
+                    subscriber(data);
+                }
+                delete this.__waitingMessages;
+            }
+        }
+        unsubscribe(subscriber) {
+            this.__verifyAlive();
+            this.__subscribers.delete(subscriber);
+        }
+        close() {
+            this.__verifyAlive();
+            this.__isAlive = false;
+            this.__port?.close();
+        }
+        /**
+         * Check if this Channel is allowed to be used.
+         * @throws Throws an error if the Channel has been closed.
+         */
+        __verifyAlive() {
+            if (!this.__isAlive)
+                throw new ConductorInternalError(`Channel ${this.name} has been closed`);
+        }
+        /**
+         * Dispatch some data to subscribers.
+         * @param data The data to be dispatched to subscribers.
+         */
+        __dispatch(data) {
+            this.__verifyAlive();
+            if (this.__waitingMessages) {
+                this.__waitingMessages.push(data);
+            }
+            else {
+                for (const subscriber of this.__subscribers) {
+                    subscriber(data);
+                }
+            }
+        }
+        /**
+         * Listens to the port's message event, and starts the port.
+         * Messages will be buffered until the first subscriber listens to the Channel.
+         * @param port The MessagePort to listen to.
+         */
+        listenToPort(port) {
+            port.addEventListener("message", e => this.__dispatch(e.data));
+            port.start();
+        }
+        /**
+         * Replaces the underlying MessagePort of this Channel and closes it, and starts the new port.
+         * @param port The new port to use.
+         */
+        replacePort(port) {
+            this.__verifyAlive();
+            this.__port?.close();
+            this.__port = port;
+            this.listenToPort(port);
+        }
+        constructor(name, port) {
+            /** The callbacks subscribed to this Channel. */
+            this.__subscribers = new Set(); // TODO: use WeakRef? but callbacks tend to be thrown away and leaking is better than incorrect behaviour
+            /** Is the Channel allowed to be used? */
+            this.__isAlive = true;
+            this.__waitingMessages = [];
+            this.name = name;
+            this.replacePort(port);
+        }
+    }
+
+    // This file is adapted from:
+    // https://github.com/source-academy/conductor
+    // Original author(s): Source Academy Team
     /**
      * A stack-based queue implementation.
      * `push` and `pop` run in amortized constant time.
@@ -3227,6 +3337,100 @@ var ScmSlangRunner = (function (exports) {
             this.name = channel.name;
             this.__channel = channel;
             this.__channel.subscribe(this.__messageQueue.push);
+        }
+    }
+
+    // This file is adapted from:
+    // https://github.com/source-academy/conductor
+    // Original author(s): Source Academy Team
+    class Conduit {
+        __negotiateChannel(channelName) {
+            const { port1, port2 } = new MessageChannel();
+            const channel = new Channel(channelName, port1);
+            this.__link.postMessage([channelName, port2], [port2]); // TODO: update communication protocol?
+            this.__channels.set(channelName, channel);
+        }
+        __verifyAlive() {
+            if (!this.__alive)
+                throw new ConductorInternalError("Conduit already terminated");
+        }
+        registerPlugin(pluginClass, ...arg) {
+            this.__verifyAlive();
+            const attachedChannels = [];
+            for (const channelName of pluginClass.channelAttach) {
+                if (!this.__channels.has(channelName))
+                    this.__negotiateChannel(channelName);
+                attachedChannels.push(this.__channels.get(channelName)); // as the Channel has been negotiated
+            }
+            const plugin = new pluginClass(this, attachedChannels, ...arg);
+            if (plugin.name !== undefined) {
+                if (this.__pluginMap.has(plugin.name))
+                    throw new ConductorInternalError(`Plugin ${plugin.name} already registered`);
+                this.__pluginMap.set(plugin.name, plugin);
+            }
+            this.__plugins.push(plugin);
+            return plugin;
+        }
+        unregisterPlugin(plugin) {
+            this.__verifyAlive();
+            let p = 0;
+            for (let i = 0; i < this.__plugins.length; ++i) {
+                if (this.__plugins[p] === plugin)
+                    ++p;
+                this.__plugins[i] = this.__plugins[i + p];
+            }
+            for (let i = this.__plugins.length - 1, e = this.__plugins.length - p; i >= e; --i) {
+                delete this.__plugins[i];
+            }
+            if (plugin.name) {
+                this.__pluginMap.delete(plugin.name);
+            }
+            plugin.destroy?.();
+        }
+        lookupPlugin(pluginName) {
+            this.__verifyAlive();
+            if (!this.__pluginMap.has(pluginName))
+                throw new ConductorInternalError(`Plugin ${pluginName} not registered`);
+            return this.__pluginMap.get(pluginName); // as the map has been checked
+        }
+        terminate() {
+            this.__verifyAlive();
+            for (const plugin of this.__plugins) {
+                //this.unregisterPlugin(plugin);
+                plugin.destroy?.();
+            }
+            this.__link.terminate?.();
+            this.__alive = false;
+        }
+        __handlePort(data) {
+            // TODO: update communication protocol?
+            const [channelName, port] = data;
+            if (this.__channels.has(channelName)) {
+                // uh-oh, we already have a port for this channel
+                const channel = this.__channels.get(channelName); // as the map has been checked
+                if (this.__parent) {
+                    // extract the data and discard the messageport; child's Channel will close it
+                    channel.listenToPort(port);
+                }
+                else {
+                    // replace our messageport; Channel will close it
+                    channel.replacePort(port);
+                }
+            }
+            else {
+                // register the new channel
+                const channel = new Channel(channelName, port);
+                this.__channels.set(channelName, channel);
+            }
+        }
+        constructor(link, parent = false) {
+            this.__alive = true;
+            this.__channels = new Map();
+            this.__pluginMap = new Map();
+            this.__plugins = [];
+            this.__link = link;
+            link.addEventListener("message", e => this.__handlePort(e.data));
+            this.__parent = parent;
         }
     }
 
@@ -3417,7 +3621,7 @@ var ScmSlangRunner = (function (exports) {
         }
     }
 
-    class SchemeEvaluator extends BasicEvaluator {
+    let SchemeEvaluator$1 = class SchemeEvaluator extends BasicEvaluator {
         constructor(conductor) {
             super(conductor);
             this.environment = createProgramEnvironment();
@@ -3427,10 +3631,6 @@ var ScmSlangRunner = (function (exports) {
                 environment: this.environment,
                 runtime: {
                     isRunning: true,
-                    envStepsTotal: 0,
-                    breakpointSteps: [],
-                    changepointSteps: [],
-                    nodes: []
                 },
             };
         }
@@ -3455,88 +3655,6 @@ var ScmSlangRunner = (function (exports) {
             }
             catch (error) {
                 this.conductor.sendOutput(`Error: ${error instanceof Error ? error.message : error}`);
-            }
-        }
-        // Add stepper methods for Source Academy frontend integration
-        async generateCSESteps(code, maxSteps = 50) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                const steps = generateCSESteps(code, maxSteps);
-                return steps;
-            }
-            catch (error) {
-                throw new Error(`CSE Stepper Error: ${error.message}`);
-            }
-        }
-        async getCSEStateAtStep(code, stepNumber) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                const state = getCSEStateAtStep(code, stepNumber);
-                return state;
-            }
-            catch (error) {
-                throw new Error(`CSE State Error: ${error.message}`);
-            }
-        }
-        async generateCSEMachineStateStream(code, maxSteps = 50) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                const control = new Control();
-                const stash = new Stash();
-                const environment = createProgramEnvironment();
-                return generateCSEMachineStateStream(expressions, maxSteps, control, stash, environment, this.context.runtime);
-            }
-            catch (error) {
-                throw new Error(`CSE Stream Error: ${error.message}`);
-            }
-        }
-        async stepExpression(code) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                return stepExpression(expressions[0]); // Step first expression
-            }
-            catch (error) {
-                throw new Error(`Tracer Error: ${error.message}`);
-            }
-        }
-        async step(code) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                return step(expressions);
-            }
-            catch (error) {
-                throw new Error(`Tracer Step Error: ${error.message}`);
-            }
-        }
-        async explainStep(code) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                const stepperSteps = step(expressions);
-                if (stepperSteps.length > 0) {
-                    return explainStep(stepperSteps[0]);
-                }
-                return "No steps to explain";
-            }
-            catch (error) {
-                throw new Error(`Tracer Explain Error: ${error.message}`);
-            }
-        }
-        async convert(code) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                return convert(expressions[0]); // Convert first expression
-            }
-            catch (error) {
-                throw new Error(`Convert Error: ${error.message}`);
-            }
-        }
-        async convertList(code) {
-            try {
-                const expressions = parseSchemeSimple(code);
-                return convertList(expressions);
-            }
-            catch (error) {
-                throw new Error(`Convert List Error: ${error.message}`);
             }
         }
         valueToString(value) {
@@ -3583,7 +3701,7 @@ var ScmSlangRunner = (function (exports) {
                 return String(value);
             }
         }
-    }
+    };
 
     // This file is adapted from:
     // https://github.com/source-academy/conductor
@@ -3642,31 +3760,6 @@ var ScmSlangRunner = (function (exports) {
                 const moduleClass = await importExternalModule(location);
                 return this.registerModule(moduleClass);
             }
-            // Stepper methods for Source Academy frontend integration
-            async generateCSESteps(code, maxSteps = 50) {
-                return this.__evaluator.generateCSESteps(code, maxSteps);
-            }
-            async getCSEStateAtStep(code, stepNumber) {
-                return this.__evaluator.getCSEStateAtStep(code, stepNumber);
-            }
-            async generateCSEMachineStateStream(code, maxSteps = 50) {
-                return this.__evaluator.generateCSEMachineStateStream(code, maxSteps);
-            }
-            async stepExpression(code) {
-                return this.__evaluator.stepExpression(code);
-            }
-            async step(code) {
-                return this.__evaluator.step(code);
-            }
-            async explainStep(code) {
-                return this.__evaluator.explainStep(code);
-            }
-            async convert(code) {
-                return this.__evaluator.convert(code);
-            }
-            async convertList(code) {
-                return this.__evaluator.convertList(code);
-            }
             constructor(conduit, [fileChannel, chunkChannel, serviceChannel, ioChannel, errorChannel, statusChannel,], evaluatorClass) {
                 this.name = "__runner_main" /* InternalPluginName.RUNNER_MAIN */;
                 // @ts-expect-error TODO: figure proper way to typecheck this
@@ -3705,7 +3798,7 @@ var ScmSlangRunner = (function (exports) {
                 this.__errorChannel = errorChannel;
                 this.__statusChannel = statusChannel;
                 // Use SchemeEvaluator instead of BasicEvaluator
-                this.__evaluator = new SchemeEvaluator(this);
+                this.__evaluator = new SchemeEvaluator$1(this);
                 this.__isCompatibleWithModules = false;
                 this.__serviceChannel.send(new HelloServiceMessage());
                 this.__serviceChannel.subscribe(message => {
@@ -3736,6 +3829,126 @@ var ScmSlangRunner = (function (exports) {
         })();
         return _classThis;
     })();
+
+    // This file is adapted from:
+    // https://github.com/source-academy/conductor
+    // Original author(s): Source Academy Team
+    const defaultContext = {
+        control: new Control(),
+        stash: new Stash(),
+        environment: createProgramEnvironment(),
+        runtime: {
+            isRunning: false
+        }
+    };
+    const defaultOptions = {
+        isPrelude: false,
+        envSteps: 100000,
+        stepLimit: 100000
+    };
+    class SchemeEvaluator extends BasicEvaluator {
+        constructor(conductor) {
+            super(conductor);
+            this.context = defaultContext;
+            this.options = defaultOptions;
+        }
+        async evaluateChunk(chunk) {
+            try {
+                const expressions = parseSchemeSimple(chunk);
+                const result = evaluate(chunk, expressions, this.context);
+                this.conductor.sendOutput(`${JSON.stringify(result)}`);
+            }
+            catch (error) {
+                this.conductor.sendOutput(`Error: ${error instanceof Error ? error.message : error}`);
+            }
+        }
+        // Add stepper methods for Source Academy frontend integration
+        async generateCSESteps(code, maxSteps = 50) {
+            try {
+                const expressions = parseSchemeSimple(code);
+                const steps = generateCSESteps(code, maxSteps);
+                return steps;
+            }
+            catch (error) {
+                throw new Error(`CSE Stepper Error: ${error.message}`);
+            }
+        }
+        async getCSEStateAtStep(code, stepNumber) {
+            try {
+                const expressions = parseSchemeSimple(code);
+                const state = getCSEStateAtStep(code, stepNumber);
+                return state;
+            }
+            catch (error) {
+                throw new Error(`CSE State Error: ${error.message}`);
+            }
+        }
+        async generateCSEMachineStateStream(code, maxSteps = 50) {
+            try {
+                const expressions = parseSchemeSimple(code);
+                const control = new Control();
+                const stash = new Stash();
+                const environment = createProgramEnvironment();
+                // Initialize context runtime
+                this.context.runtime = {
+                    isRunning: true,
+                    envStepsTotal: 0,
+                    breakpointSteps: [],
+                    changepointSteps: [],
+                    nodes: []
+                };
+                return generateCSEMachineStateStream(expressions, maxSteps, control, stash, environment, this.context.runtime);
+            }
+            catch (error) {
+                throw new Error(`CSE Machine Stream Error: ${error.message}`);
+            }
+        }
+        // Tracer methods
+        async stepExpression(code) {
+            try {
+                const expressions = parseSchemeSimple(code);
+                const steps = stepExpression(expressions[0]);
+                return steps;
+            }
+            catch (error) {
+                throw new Error(`Tracer Error: ${error.message}`);
+            }
+        }
+        async step(code) {
+            try {
+                const expressions = parseSchemeSimple(code);
+                const steps = step(expressions);
+                return steps;
+            }
+            catch (error) {
+                throw new Error(`Tracer Step Error: ${error.message}`);
+            }
+        }
+        async explainStep(step) {
+            try {
+                return explainStep(step);
+            }
+            catch (error) {
+                throw new Error(`Explain Step Error: ${error.message}`);
+            }
+        }
+        async convert(expression) {
+            try {
+                return convert(expression);
+            }
+            catch (error) {
+                throw new Error(`Convert Error: ${error.message}`);
+            }
+        }
+        async convertList(expressions) {
+            try {
+                return convertList(expressions);
+            }
+            catch (error) {
+                throw new Error(`Convert List Error: ${error.message}`);
+            }
+        }
+    }
 
     class LexerError extends SyntaxError {
         constructor(message, line, col) {
@@ -7168,109 +7381,47 @@ var ScmSlangRunner = (function (exports) {
         }
         // Finally we transpile the AST
         const program = transpiler.transpile(finalAST);
-        return encode ? program : program;
+        return encode ? estreeEncode(program) : program;
+    }
+
+    /**
+     * Initialise this runner with the evaluator to be used.
+     * @param evaluatorClass The Evaluator to be used on this runner.
+     * @param link The underlying communication link.
+     * @returns The initialised `runnerPlugin` and `conduit`.
+     */
+    function initialise(evaluatorClass, link = (typeof self !== "undefined"
+        ? self
+        : typeof global !== "undefined"
+            ? global
+            : {
+                addEventListener: () => { },
+                postMessage: () => { },
+                onmessage: null,
+            })) {
+        // Skip conductor initialization in browser environment for now
+        // This is causing issues with postMessage
+        if (typeof window !== "undefined") {
+            // Return mock objects for browser
+            return {
+                runnerPlugin: {},
+                conduit: {},
+            };
+        }
+        const conduit = new Conduit(link, false);
+        const runnerPlugin = conduit.registerPlugin(RunnerPlugin, evaluatorClass);
+        return { runnerPlugin, conduit };
     }
 
     // Core exports for Scheme language
-    // Initialize Conductor system for browser environment
-    let conductor = null;
-    let conduit = null;
-    // Browser-specific initialization
-    if (typeof window !== 'undefined') {
-        try {
-            // Initialize Conductor system
-            const { Conductor } = require('./conductor/conductor');
-            const { Conduit } = require('./conductor/conduit');
-            const { RunnerPlugin } = require('./conductor/runner/RunnerPlugin');
-            conductor = new Conductor();
-            conduit = new Conduit();
-            // Create and register the Scheme runner plugin
-            const runnerPlugin = new RunnerPlugin(conductor);
-            conductor.registerPlugin('scheme', runnerPlugin);
-            // Expose globally for Source Academy integration
-            window.ScmSlangRunner = {
-                // Core functions
-                parseSchemeSimple,
-                evaluate,
-                createProgramEnvironment,
-                Control,
-                Stash,
-                SchemeComplexNumber,
-                // CSE Machine Stepper
-                generateCSESteps,
-                getCSEStateAtStep,
-                generateCSEMachineStateStream,
-                // Tracer
-                stepExpression,
-                step,
-                explainStep,
-                convert,
-                convertList,
-                // Transpiler
-                schemeParse
-            };
-            console.log('✅ ScmSlangRunner initialized successfully');
-        }
-        catch (error) {
-            console.warn('⚠️ Conductor initialization failed, using mock objects:', error);
-            // Fallback: expose functions directly without Conductor
-            window.ScmSlangRunner = {
-                // Core functions
-                parseSchemeSimple,
-                evaluate,
-                createProgramEnvironment,
-                Control,
-                Stash,
-                SchemeComplexNumber,
-                // CSE Machine Stepper
-                generateCSESteps,
-                getCSEStateAtStep,
-                generateCSEMachineStateStream,
-                // Tracer
-                stepExpression,
-                step,
-                explainStep,
-                convert,
-                convertList,
-                // Transpiler
-                schemeParse
-            };
-            console.log('✅ ScmSlangRunner initialized with fallback mode');
-        }
-    }
-    // Node.js environment exports
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            // Core functions
-            parseSchemeSimple,
-            evaluate,
-            createProgramEnvironment,
-            Control,
-            Stash,
-            SchemeComplexNumber,
-            // CSE Machine Stepper
-            generateCSESteps,
-            getCSEStateAtStep,
-            generateCSEMachineStateStream,
-            // Tracer
-            stepExpression,
-            step,
-            explainStep,
-            convert,
-            convertList,
-            // Conductor system
-            conductor,
-            conduit,
-            // Transpiler
-            schemeParse
-        };
-    }
+    const { runnerPlugin, conduit } = initialise(SchemeEvaluator);
 
     exports.Control = Control;
     exports.RunnerPlugin = RunnerPlugin;
     exports.SchemeComplexNumber = SchemeComplexNumber;
     exports.SchemeEvaluator = SchemeEvaluator;
     exports.Stash = Stash;
+    exports.conduit = conduit;
     exports.convert = convert;
     exports.convertList = convertList;
     exports.createProgramEnvironment = createProgramEnvironment;
@@ -7280,10 +7431,9 @@ var ScmSlangRunner = (function (exports) {
     exports.generateCSESteps = generateCSESteps;
     exports.getCSEStateAtStep = getCSEStateAtStep;
     exports.parseSchemeSimple = parseSchemeSimple;
+    exports.runnerPlugin = runnerPlugin;
     exports.schemeParse = schemeParse;
     exports.step = step;
     exports.stepExpression = stepExpression;
 
-    return exports;
-
-})({});
+}));
