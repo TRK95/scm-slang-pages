@@ -3233,15 +3233,465 @@
         }
     }
 
-    // Simple stepper implementation
-    function createSimpleStepperNode(node) {
+    class StepperLiteral {
+        constructor(value, raw) {
+            this.type = "Literal";
+            this.value = value;
+            this.raw = raw || String(value);
+        }
+        static create(node) {
+            console.log('[SCM-DEBUG] StepperLiteral.create called with:', node);
+            let value = node.value;
+            let literalKind;
+            // Convert value based on node type
+            if (node.type === "NumericLiteral") {
+                value = Number(node.value);
+                literalKind = "number";
+                console.log('[SCM-DEBUG] NumericLiteral converted:', node.value, '->', value, 'type:', typeof value);
+            }
+            else if (node.type === "BooleanLiteral") {
+                value = Boolean(node.value);
+                literalKind = "boolean";
+            }
+            else if (node.type === "StringLiteral") {
+                value = String(node.value);
+                literalKind = "string";
+            }
+            const literal = new StepperLiteral(value, String(node.value));
+            literal.literalKind = literalKind;
+            console.log('[SCM-DEBUG] StepperLiteral created:', literal);
+            return literal;
+        }
+        isContractible() {
+            return true;
+        }
+        isOneStepPossible() {
+            return false;
+        }
+        contract() {
+            return this;
+        }
+        oneStep() {
+            return this;
+        }
+        substitute(id, value) {
+            return this;
+        }
+        freeNames() {
+            return [];
+        }
+        allNames() {
+            return [];
+        }
+        rename(before, after) {
+            return this;
+        }
+        toString() {
+            return this.raw;
+        }
+    }
+
+    class StepperIdentifier {
+        constructor(name) {
+            this.type = "Identifier";
+            this.name = name;
+        }
+        static create(node) {
+            return new StepperIdentifier(node.name);
+        }
+        isContractible() {
+            return true;
+        }
+        isOneStepPossible() {
+            return false;
+        }
+        contract() {
+            return this;
+        }
+        oneStep() {
+            return this;
+        }
+        substitute(id, value) {
+            if (this.name === id.name) {
+                return value;
+            }
+            return this;
+        }
+        freeNames() {
+            return [this.name];
+        }
+        allNames() {
+            return [this.name];
+        }
+        rename(before, after) {
+            if (this.name === before) {
+                return new StepperIdentifier(after);
+            }
+            return this;
+        }
+        toString() {
+            return this.name;
+        }
+    }
+
+    class StepperFunctionApplication {
+        constructor(operator, operands) {
+            this.type = "FunctionApplication";
+            this.operator = operator;
+            this.operands = operands;
+        }
+        static create(node) {
+            // This will be handled by the convertNode function in generator.ts
+            return new StepperFunctionApplication(node.operator, node.operands);
+        }
+        isContractible() {
+            // Check if operator is a lambda and all operands are literals
+            if (this.operator.type === "LambdaExpression") {
+                return this.operands.every(op => op.isContractible());
+            }
+            return false;
+        }
+        isOneStepPossible() {
+            // Can step if any operand is not contractible, or if operator is lambda and all operands are contractible
+            return (this.operands.some(op => !op.isContractible()) || this.isContractible());
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error("Cannot contract non-contractible expression");
+            }
+            // Perform beta-reduction for lambda applications
+            if (this.operator.type === "LambdaExpression") {
+                const lambda = this.operator;
+                let body = lambda.body;
+                // Substitute parameters with arguments
+                for (let i = 0; i < lambda.params.length && i < this.operands.length; i++) {
+                    const param = lambda.params[i];
+                    const arg = this.operands[i];
+                    body = body.substitute(param, arg);
+                }
+                return body;
+            }
+            return this;
+        }
+        oneStep() {
+            // First, step any non-contractible operands
+            const steppedOperands = this.operands.map(op => op.isContractible() ? op : op.oneStep());
+            // If all operands are now contractible and operator is lambda, contract
+            if (this.operator.type === "LambdaExpression" &&
+                steppedOperands.every(op => op.isContractible())) {
+                return this.contract();
+            }
+            return new StepperFunctionApplication(this.operator, steppedOperands);
+        }
+        substitute(id, value) {
+            return new StepperFunctionApplication(this.operator.substitute(id, value), this.operands.map(op => op.substitute(id, value)));
+        }
+        freeNames() {
+            return [
+                ...this.operator.freeNames(),
+                ...this.operands.flatMap(op => op.freeNames()),
+            ];
+        }
+        allNames() {
+            return [
+                ...this.operator.allNames(),
+                ...this.operands.flatMap(op => op.allNames()),
+            ];
+        }
+        rename(before, after) {
+            return new StepperFunctionApplication(this.operator.rename(before, after), this.operands.map(op => op.rename(before, after)));
+        }
+        toString() {
+            return `(${this.operator.toString()} ${this.operands.map(op => op.toString()).join(" ")})`;
+        }
+    }
+
+    class StepperLambdaExpression {
+        constructor(params, body) {
+            this.type = "LambdaExpression";
+            this.params = params;
+            this.body = body;
+        }
+        static create(node) {
+            // This will be handled by the convertNode function in generator.ts
+            return new StepperLambdaExpression(node.params || [], node.body);
+        }
+        isContractible() {
+            return true; // Lambda expressions are irreducible
+        }
+        isOneStepPossible() {
+            return false; // Lambda expressions cannot be stepped
+        }
+        contract() {
+            return this; // Lambda expressions are irreducible
+        }
+        oneStep() {
+            return this; // Lambda expressions cannot be stepped
+        }
+        substitute(id, value) {
+            // Don't substitute if the identifier is bound by this lambda
+            if (this.params.some(param => param.name === id.name)) {
+                return this;
+            }
+            return new StepperLambdaExpression(this.params, this.body.substitute(id, value));
+        }
+        freeNames() {
+            const paramNames = this.params.map(p => p.name);
+            return this.body.freeNames().filter(name => !paramNames.includes(name));
+        }
+        allNames() {
+            const paramNames = this.params.map(p => p.name);
+            return [...paramNames, ...this.body.allNames()];
+        }
+        rename(before, after) {
+            // Rename parameters if they match
+            const newParams = this.params.map(param => param.name === before ? new param.constructor(after) : param);
+            return new StepperLambdaExpression(newParams, this.body.rename(before, after));
+        }
+        toString() {
+            const paramsStr = this.params.map(p => p.toString()).join(" ");
+            return `(lambda (${paramsStr}) ${this.body.toString()})`;
+        }
+    }
+
+    class StepperProgram {
+        constructor(body) {
+            this.type = "Program";
+            this.body = body;
+        }
+        static create(node) {
+            // This will be handled by the convertNode function in generator.ts
+            return new StepperProgram(node.expressions || []);
+        }
+        isContractible() {
+            return this.body.every(expr => expr.isContractible());
+        }
+        isOneStepPossible() {
+            return this.body.some(expr => expr.isOneStepPossible());
+        }
+        contract() {
+            if (!this.isContractible()) {
+                throw new Error("Cannot contract non-contractible program");
+            }
+            // Contract all expressions in the program
+            const contractedBody = this.body.map(expr => expr.contract());
+            // If there's only one expression left, return it
+            if (contractedBody.length === 1) {
+                return contractedBody[0];
+            }
+            return new StepperProgram(contractedBody);
+        }
+        oneStep() {
+            // Find the first expression that can be stepped
+            for (let i = 0; i < this.body.length; i++) {
+                const expr = this.body[i];
+                if (expr.isOneStepPossible()) {
+                    const newBody = [...this.body];
+                    newBody[i] = expr.oneStep();
+                    return new StepperProgram(newBody);
+                }
+            }
+            // If we can contract the entire program, do it
+            if (this.isContractible()) {
+                return this.contract();
+            }
+            return this;
+        }
+        substitute(id, value) {
+            return new StepperProgram(this.body.map(expr => expr.substitute(id, value)));
+        }
+        freeNames() {
+            return this.body.flatMap(expr => expr.freeNames());
+        }
+        allNames() {
+            return this.body.flatMap(expr => expr.allNames());
+        }
+        rename(before, after) {
+            return new StepperProgram(this.body.map(expr => expr.rename(before, after)));
+        }
+        toString() {
+            return this.body.map(expr => expr.toString()).join("\n");
+        }
+    }
+
+    const undefinedNode = new StepperLiteral("undefined");
+    // Helper function to convert nodes without circular dependency
+    function convertNode(node) {
         const nodeType = node.constructor.name;
         switch (nodeType) {
-            case 'NumericLiteral':
-            case 'BooleanLiteral':
-            case 'StringLiteral':
+            case "NumericLiteral":
+            case "BooleanLiteral":
+            case "StringLiteral":
+                return StepperLiteral.create(node);
+            case "Identifier":
+                return StepperIdentifier.create(node);
+            case "Application":
+                return new StepperFunctionApplication(convertNode(node.operator), node.operands.map(convertNode));
+            case "Lambda":
+                return new StepperLambdaExpression(node.params || [], convertNode(node.body));
+            case "Sequence":
+                return new StepperProgram(node.expressions.map(convertNode));
+            default:
+                return undefinedNode;
+        }
+    }
+    const nodeConverters = {
+        NumericLiteral: (node) => StepperLiteral.create(node),
+        BooleanLiteral: (node) => StepperLiteral.create(node),
+        StringLiteral: (node) => StepperLiteral.create(node),
+        Identifier: (node) => StepperIdentifier.create(node),
+        Application: (node) => convertNode(node),
+        Lambda: (node) => convertNode(node),
+        Sequence: (node) => convertNode(node),
+    };
+    function convert(node) {
+        const converter = nodeConverters[node.type];
+        return converter ? converter(node) : undefinedNode;
+    }
+    function explain(node) {
+        // Generate explanation based on node type
+        switch (node.type) {
+            case "Literal":
+                return `Evaluated to literal value: ${node.toString()}`;
+            case "BinaryExpression":
+                return `Evaluated binary expression: ${node.toString()}`;
+            case "Identifier":
+                return `Variable reference: ${node.toString()}`;
+            case "FunctionApplication":
+                return `Function application: ${node.toString()}`;
+            case "LambdaExpression":
+                return `Lambda expression: ${node.toString()}`;
+            default:
+                return `Processed ${node.type}`;
+        }
+    }
+
+    let redex = {
+        preRedex: [],
+        postRedex: [],
+    };
+
+    function getSteps(inputNode, context, { stepLimit }) {
+        const node = inputNode;
+        const steps = [];
+        const limit = stepLimit === undefined
+            ? 1000
+            : stepLimit % 2 === 0
+                ? stepLimit
+                : stepLimit + 1;
+        let numSteps = 0;
+        function evaluate(node) {
+            numSteps += 1;
+            if (numSteps >= limit) {
+                return node;
+            }
+            try {
+                const isOneStepPossible = node.isOneStepPossible();
+                if (isOneStepPossible) {
+                    const oldNode = node;
+                    let newNode;
+                    newNode = node.oneStep();
+                    if (redex) {
+                        const explanations = redex.preRedex.map(explain);
+                        const beforeMarkers = redex.preRedex.map((redex, index) => ({
+                            redex: redex,
+                            redexType: "beforeMarker",
+                            explanation: explanations[index],
+                        }));
+                        steps.push({
+                            ast: oldNode,
+                            markers: beforeMarkers,
+                        });
+                        const afterMarkers = redex.postRedex.length > 0
+                            ? redex.postRedex.map((redex, index) => ({
+                                redex: redex,
+                                redexType: "afterMarker",
+                                explanation: explanations[index],
+                            }))
+                            : [
+                                {
+                                    redexType: "afterMarker",
+                                    explanation: explanations[0], // use explanation based on preRedex
+                                },
+                            ];
+                        steps.push({
+                            ast: newNode,
+                            markers: afterMarkers,
+                        });
+                    }
+                    // reset
+                    redex.preRedex = [];
+                    redex.postRedex = [];
+                    return evaluate(newNode);
+                }
+                else {
+                    return node;
+                }
+            }
+            catch (error) {
+                steps.push({
+                    ast: node,
+                    markers: [
+                        {
+                            redexType: "beforeMarker",
+                            explanation: error instanceof Error ? error.message : String(error),
+                        },
+                    ],
+                });
+                return node;
+            }
+        }
+        // First node
+        steps.push({
+            ast: node,
+            markers: [
+                {
+                    explanation: "Start of evaluation",
+                },
+            ],
+        });
+        // Start evaluation
+        evaluate(node);
+        return steps;
+    }
+
+    // Convert Scheme AST to StepperBaseNode
+    function convertToStepperNode(node) {
+        if (!node)
+            return node;
+        // Handle array of expressions
+        if (Array.isArray(node)) {
+            if (node.length === 1) {
+                return convertToStepperNode(node[0]);
+            }
+            else {
+                // Create Program node for multiple expressions
+                return convert({
+                    type: "Sequence",
+                    expressions: node
+                });
+            }
+        }
+        // Convert based on constructor.name for Scheme AST
+        const nodeType = node.constructor.name;
+        console.log('[SCM-STEPPER] Converting node type:', nodeType, node);
+        switch (nodeType) {
+            case "NumericLiteral":
                 return {
-                    type: 'Literal',
+                    type: "Literal",
+                    literalKind: "number",
+                    value: Number(node.value),
+                    raw: String(node.value),
+                    toString: () => String(node.value),
+                    isContractible: () => true,
+                    isOneStepPossible: () => false,
+                    contract: function () { return this; },
+                    oneStep: function () { return this; }
+                };
+            case "BooleanLiteral":
+                return {
+                    type: "Literal",
+                    literalKind: "boolean",
                     value: node.value,
                     raw: String(node.value),
                     toString: () => String(node.value),
@@ -3250,9 +3700,21 @@
                     contract: function () { return this; },
                     oneStep: function () { return this; }
                 };
-            case 'Identifier':
+            case "StringLiteral":
                 return {
-                    type: 'Identifier',
+                    type: "Literal",
+                    literalKind: "string",
+                    value: node.value,
+                    raw: String(node.value),
+                    toString: () => String(node.value),
+                    isContractible: () => true,
+                    isOneStepPossible: () => false,
+                    contract: function () { return this; },
+                    oneStep: function () { return this; }
+                };
+            case "Identifier":
+                return {
+                    type: "Identifier",
                     name: node.name,
                     toString: () => node.name,
                     isContractible: () => true,
@@ -3260,44 +3722,58 @@
                     contract: function () { return this; },
                     oneStep: function () { return this; }
                 };
-            case 'Application': {
-                const opNode = createSimpleStepperNode(node.operator);
-                const ops = node.operands.map(createSimpleStepperNode);
-                // Arithmetic: render like js-slang BinaryExpression for UI compatibility
-                if (opNode.type === 'Identifier' && ['+', '-', '*', '/'].includes(opNode.name)) {
-                    const left = ops[0];
-                    const right = ops[1];
-                    const operatorSymbol = opNode.name;
-                    return {
-                        type: 'BinaryExpression',
-                        operator: operatorSymbol,
-                        left,
-                        right,
-                        toString: () => `${left.toString()} ${operatorSymbol} ${right.toString()}`,
-                        isContractible: () => left.type === 'Literal' && right.type === 'Literal',
-                        isOneStepPossible: () => !(left.type === 'Literal' && right.type === 'Literal') || true,
-                        contract: function () {
-                            if (!this.isContractible())
-                                return this;
-                            const a = Number(left.value);
-                            const b = Number(right.value);
-                            let result = 0;
-                            switch (operatorSymbol) {
-                                case '+':
-                                    result = a + b;
+            case "Application":
+                const opNode = convertToStepperNode(node.operator);
+                const ops = node.operands.map(convertToStepperNode);
+                return {
+                    type: "FunctionApplication",
+                    operator: opNode,
+                    operands: ops,
+                    toString: function () {
+                        return `(${this.operator.toString()} ${this.operands.map((n) => n.toString()).join(" ")})`;
+                    },
+                    isContractible: function () {
+                        const isPrim = this.operator.type === "Identifier" &&
+                            ["+", "-", "*", "/"].includes(this.operator.name);
+                        const allLit = this.operands.every((op) => op.type === "Literal" || (op.isContractible && op.isContractible()));
+                        return isPrim && allLit;
+                    },
+                    isOneStepPossible: function () {
+                        return this.operands.some((op) => op.isOneStepPossible && op.isOneStepPossible()) || this.isContractible();
+                    },
+                    contract: function () {
+                        if (this.isContractible()) {
+                            const op = this.operator.name;
+                            const left = this.operands[0].isContractible() ? this.operands[0].contract().value : this.operands[0].value;
+                            const right = this.operands[1].isContractible() ? this.operands[1].contract().value : this.operands[1].value;
+                            console.log('[SCM-DEBUG] + operator - left:', left, 'type:', typeof left);
+                            console.log('[SCM-DEBUG] + operator - right:', right, 'type:', typeof right);
+                            let result;
+                            switch (op) {
+                                case "+":
+                                    // Only do arithmetic if both are numbers
+                                    if (typeof left === 'number' && typeof right === 'number') {
+                                        result = left + right;
+                                    }
+                                    else {
+                                        // For Scheme, + should only work on numbers
+                                        throw new Error("+ requires numeric arguments");
+                                    }
                                     break;
-                                case '-':
-                                    result = a - b;
+                                case "-":
+                                    result = Number(left) - Number(right);
                                     break;
-                                case '*':
-                                    result = a * b;
+                                case "*":
+                                    result = Number(left) * Number(right);
                                     break;
-                                case '/':
-                                    result = a / b;
+                                case "/":
+                                    result = Number(left) / Number(right);
                                     break;
+                                default: result = 0;
                             }
                             return {
-                                type: 'Literal',
+                                type: "Literal",
+                                literalKind: "number",
                                 value: result,
                                 raw: String(result),
                                 toString: () => String(result),
@@ -3306,161 +3782,249 @@
                                 contract: function () { return this; },
                                 oneStep: function () { return this; }
                             };
-                        },
-                        oneStep: function () {
-                            if (left.type !== 'Literal' && left.isOneStepPossible()) {
-                                return {
-                                    ...this,
-                                    left: left.oneStep()
-                                };
-                            }
-                            if (right.type !== 'Literal' && right.isOneStepPossible()) {
-                                return {
-                                    ...this,
-                                    right: right.oneStep()
-                                };
-                            }
-                            return this.contract();
                         }
-                    };
-                }
-                // General application (lambda etc.)
-                const operator = opNode;
-                const operands = ops;
-                return {
-                    type: 'FunctionApplication',
-                    operator,
-                    operands,
-                    toString: () => `(${operator.toString()} ${operands.map((n) => n.toString()).join(' ')})`,
-                    isContractible: () => operator.type === 'LambdaExpression' && operands.every((op) => op.isContractible()),
-                    isOneStepPossible: function () { return operands.some((op) => op.isOneStepPossible()) || this.isContractible(); },
-                    contract: function () { return this; },
-                    oneStep: function () {
-                        const steppedOperands = operands.map((op) => (op.isOneStepPossible() ? op.oneStep() : op));
-                        if (operator.type === 'LambdaExpression' && steppedOperands.every((op) => op.isContractible())) {
-                            // naive: return first argument for now
-                            return steppedOperands[0];
-                        }
-                        return { ...this, operands: steppedOperands };
-                    }
-                };
-            }
-            case 'Lambda':
-                const body = createSimpleStepperNode(node.body);
-                return {
-                    type: 'LambdaExpression',
-                    params: node.params || [],
-                    body,
-                    toString: () => `(lambda (${(node.params || []).map((p) => p.name).join(' ')}) ${body.toString()})`,
-                    isContractible: () => true,
-                    isOneStepPossible: () => false,
-                    contract: function () { return this; },
-                    oneStep: function () { return this; }
-                };
-            case 'Sequence':
-                const bodyNodes = node.expressions.map(createSimpleStepperNode);
-                return {
-                    type: 'Program',
-                    body: bodyNodes,
-                    toString: () => bodyNodes.map((n) => n.toString()).join('\n'),
-                    isContractible: () => bodyNodes.every((expr) => expr.isContractible()),
-                    isOneStepPossible: () => bodyNodes.some((expr) => expr.isOneStepPossible()),
-                    contract: function () {
-                        if (!this.isContractible()) {
-                            throw new Error('Cannot contract non-contractible program');
-                        }
-                        const contractedBody = bodyNodes.map((expr) => expr.contract());
-                        if (contractedBody.length === 1) {
-                            return contractedBody[0];
-                        }
-                        return { ...this, body: contractedBody };
+                        return this;
                     },
                     oneStep: function () {
-                        for (let i = 0; i < bodyNodes.length; i++) {
-                            const expr = bodyNodes[i];
-                            if (expr.isOneStepPossible()) {
-                                const newBody = [...bodyNodes];
-                                newBody[i] = expr.oneStep();
-                                return { ...this, body: newBody };
+                        // First try to reduce operands
+                        for (let i = 0; i < this.operands.length; i++) {
+                            if (this.operands[i].isOneStepPossible && this.operands[i].isOneStepPossible()) {
+                                const newOperands = [...this.operands];
+                                newOperands[i] = this.operands[i].oneStep();
+                                return {
+                                    ...this,
+                                    operands: newOperands
+                                };
                             }
                         }
+                        // Then try to contract if possible
                         if (this.isContractible()) {
                             return this.contract();
                         }
                         return this;
                     }
                 };
-            default:
+            case "Lambda":
                 return {
-                    type: 'Literal',
-                    value: 'undefined',
-                    raw: 'undefined',
-                    toString: () => 'undefined',
-                    isContractible: () => true,
-                    isOneStepPossible: () => false,
+                    type: "LambdaExpression",
+                    params: node.params || [],
+                    body: convertToStepperNode(node.body),
+                    toString: function () {
+                        const paramStr = this.params.map((p) => p.name).join(" ");
+                        return `(lambda (${paramStr}) ${this.body.toString()})`;
+                    },
+                    isContractible: () => false,
+                    isOneStepPossible: function () {
+                        return this.body.isOneStepPossible && this.body.isOneStepPossible();
+                    },
                     contract: function () { return this; },
-                    oneStep: function () { return this; }
+                    oneStep: function () {
+                        return {
+                            ...this,
+                            body: this.body.oneStep()
+                        };
+                    }
                 };
+            case "Conditional":
+                return {
+                    type: "IfStatement",
+                    test: convertToStepperNode(node.test),
+                    consequent: convertToStepperNode(node.consequent),
+                    alternate: node.alternate ? convertToStepperNode(node.alternate) : null,
+                    toString: function () {
+                        const testStr = this.test.toString();
+                        const consequentStr = this.consequent.toString();
+                        const alternateStr = this.alternate ? this.alternate.toString() : "";
+                        return `(if ${testStr} ${consequentStr}${this.alternate ? ` ${alternateStr}` : ""})`;
+                    },
+                    isContractible: function () {
+                        return this.test.type === "Literal";
+                    },
+                    isOneStepPossible: function () {
+                        return this.isContractible() || (this.test.isOneStepPossible && this.test.isOneStepPossible());
+                    },
+                    contract: function () {
+                        if (this.isContractible()) {
+                            // Scheme: only #f is false; everything else is true
+                            const isFalse = this.test.literalKind === "boolean" && this.test.value === false;
+                            if (isFalse) {
+                                return this.alternate != null ? this.alternate : { type: "Literal", literalKind: "undefined", value: undefined, raw: "undefined", toString: () => "undefined", isContractible: () => true, isOneStepPossible: () => false, contract: function () { return this; }, oneStep: function () { return this; } };
+                            }
+                            return this.consequent;
+                        }
+                        return this;
+                    },
+                    oneStep: function () {
+                        if (this.isContractible()) {
+                            return this.contract();
+                        }
+                        return {
+                            ...this,
+                            test: this.test.oneStep()
+                        };
+                    }
+                };
+            default:
+                console.log('[SCM-STEPPER] Unknown node type:', nodeType);
+                return convert(node);
         }
     }
-    function stepExpression(code, stepLimit = 1000) {
+    function stepExpression(code, context = {}, stepLimit = 1000) {
         try {
+            const isOneStepPossibleSafe = (n) => !!n && typeof n.isOneStepPossible === "function" && n.isOneStepPossible();
+            const isContractibleSafe = (n) => !!n && typeof n.isContractible === "function" && n.isContractible();
+            const getNodeAtPath = (node, path) => {
+                let cur = node;
+                for (const seg of path) {
+                    if (cur == null)
+                        return cur;
+                    if (seg.key === "left" || seg.key === "right") {
+                        cur = cur[seg.key];
+                    }
+                    else if (seg.key === "body" || seg.key === "operands") {
+                        const arr = cur[seg.key];
+                        cur = Array.isArray(arr) ? arr[seg.index] : undefined;
+                    }
+                }
+                return cur;
+            };
+            const findReduciblePath = (node) => {
+                if (!node)
+                    return null;
+                switch (node.type) {
+                    case "Program": {
+                        const body = node.body || [];
+                        for (let i = 0; i < body.length; i++) {
+                            const sub = body[i];
+                            const subPath = findReduciblePath(sub);
+                            if (subPath)
+                                return [{ key: "body", index: i }, ...subPath];
+                        }
+                        return isContractibleSafe(node) ? [] : null;
+                    }
+                    case "BinaryExpression": {
+                        const left = node.left;
+                        const right = node.right;
+                        if (isOneStepPossibleSafe(left))
+                            return [{ key: "left" }, ...(findReduciblePath(left) || [])];
+                        if (isOneStepPossibleSafe(right))
+                            return [{ key: "right" }, ...(findReduciblePath(right) || [])];
+                        return isContractibleSafe(node) ? [] : null;
+                    }
+                    case "FunctionApplication": {
+                        const ops = node.operands || [];
+                        for (let i = 0; i < ops.length; i++) {
+                            const sub = ops[i];
+                            if (isOneStepPossibleSafe(sub))
+                                return [
+                                    { key: "operands", index: i },
+                                    ...(findReduciblePath(sub) || []),
+                                ];
+                        }
+                        return isContractibleSafe(node) ? [] : null;
+                    }
+                    default:
+                        return null;
+                }
+            };
+            const explainRedex = (node) => {
+                // Arithmetic in prefix form: (+ a b)
+                if (node &&
+                    node.type === "FunctionApplication" &&
+                    node.operator &&
+                    node.operator.type === "Identifier" &&
+                    ["+", "-", "*", "/"].includes(node.operator.name)) {
+                    const ops = node.operands || [];
+                    if (ops.length >= 2) {
+                        const l = ops[0].raw !== undefined
+                            ? ops[0].raw
+                            : ops[0].value !== undefined
+                                ? String(ops[0].value)
+                                : "";
+                        const r = ops[1].raw !== undefined
+                            ? ops[1].raw
+                            : ops[1].value !== undefined
+                                ? String(ops[1].value)
+                                : "";
+                        if (l !== "" && r !== "")
+                            return `Binary expression ${l} ${node.operator.name} ${r} evaluated`;
+                    }
+                }
+                return "Step";
+            };
+            const canReduce = (node) => {
+                if (!node || typeof node !== "object")
+                    return false;
+                switch (node.type) {
+                    case "Literal":
+                    case "Identifier":
+                        return false;
+                    case "LambdaExpression":
+                        return canReduce(node.body);
+                    case "Program":
+                        return (node.body || []).some((b) => canReduce(b));
+                    case "FunctionApplication": {
+                        const ops = node.operands || [];
+                        if (ops.some((o) => canReduce(o)))
+                            return true;
+                        const isPrim = node.operator &&
+                            node.operator.type === "Identifier" &&
+                            ["+", "-", "*", "/"].includes(node.operator.name);
+                        const allLit = ops.length >= 2 && ops.every((o) => o.type === "Literal");
+                        const allContractible = ops.every((o) => o.isContractible ? o.isContractible() : true);
+                        return ((isPrim && allLit) ||
+                            (node.operator &&
+                                node.operator.type === "LambdaExpression" &&
+                                allContractible));
+                    }
+                    default:
+                        return false;
+                }
+            };
             // Parse the Scheme code into AST
             const expressions = parseSchemeSimple(code);
             if (!expressions || expressions.length === 0) {
-                return [{
-                        ast: { type: 'Literal', value: 'error', raw: 'error' },
-                        markers: [{ explanation: 'Error parsing code' }]
-                    }];
+                return [
+                    {
+                        ast: { type: "Literal", value: "error", raw: "error" },
+                        markers: [{ explanation: "Error parsing code" }],
+                    },
+                ];
             }
             // Convert to stepper nodes
-            let stepperNode;
-            if (expressions.length === 1) {
-                stepperNode = createSimpleStepperNode(expressions[0]);
-            }
-            else {
-                // Create a program node for multiple expressions
-                stepperNode = createSimpleStepperNode({ constructor: { name: 'Sequence' }, expressions });
-            }
-            // Generate steps manually
-            const steps = [];
-            // Add initial step
-            steps.push({
-                ast: stepperNode,
-                markers: [{ explanation: 'Initial expression' }]
-            });
-            // Generate steps until no more steps possible or limit reached
-            let currentStep = 0;
-            let currentNode = stepperNode;
-            while (currentStep < stepLimit && currentNode.isOneStepPossible()) {
-                currentStep++;
-                try {
-                    const oldNode = currentNode;
-                    currentNode = currentNode.oneStep();
-                    steps.push({
-                        ast: oldNode,
-                        markers: [{ explanation: `Step ${currentStep}: Before reduction` }]
-                    });
-                    steps.push({
-                        ast: currentNode,
-                        markers: [{ explanation: `Step ${currentStep}: After reduction` }]
-                    });
+            const stepperNode = convertToStepperNode(expressions);
+            console.log('[SCM-STEPPER] Stepper node:', stepperNode);
+            // Use Scheme stepper to get steps
+            console.log('[SCM-STEPPER] About to call getSteps with:', { stepperNode, context, stepLimit });
+            try {
+                const stepResults = getSteps(stepperNode, context, { stepLimit });
+                console.log('[SCM-STEPPER] Step results:', stepResults);
+                console.log('[SCM-STEPPER] Number of steps:', stepResults.length);
+                // Check if steps are valid
+                if (!stepResults || stepResults.length === 0) {
+                    console.log('[SCM-STEPPER] No steps generated, creating fallback');
+                    return [{
+                            ast: stepperNode,
+                            markers: [{ explanation: "Start of evaluation" }]
+                        }];
                 }
-                catch (error) {
-                    steps.push({
-                        ast: currentNode,
-                        markers: [{ explanation: `Step ${currentStep}: Error - ${error}` }]
-                    });
-                    break;
-                }
+                return stepResults;
             }
-            return steps;
+            catch (error) {
+                console.error('[SCM-STEPPER] Error in getSteps:', error);
+                return [{
+                        ast: stepperNode,
+                        markers: [{ explanation: `Error: ${error}` }]
+                    }];
+            }
         }
         catch (error) {
-            return [{
-                    ast: { type: 'Literal', value: 'error', raw: 'error' },
-                    markers: [{ explanation: `Error parsing code: ${error}` }]
-                }];
+            return [
+                {
+                    ast: { type: "Literal", value: "error", raw: "error" },
+                    markers: [{ explanation: `Error parsing code: ${error}` }],
+                },
+            ];
         }
     }
 
@@ -3468,6 +4032,23 @@
     // Import js-base64 functions directly
     const b64Encode = (str) => btoa(unescape(encodeURIComponent(str)));
     const b64Decode = (str) => decodeURIComponent(escape(atob(str)));
+    // Simple evaluate function for frontend use
+    function evaluateSimple(code) {
+        try {
+            const program = parseSchemeSimple(code);
+            const context = {
+                environment: createProgramEnvironment(),
+                runtime: { isRunning: false },
+                control: new Control(),
+                stash: new Stash()
+            };
+            const result = evaluate(code, program, context);
+            return result;
+        }
+        catch (error) {
+            return { type: "error", message: error.message };
+        }
+    }
     const JS_KEYWORDS = [
         "break",
         "case",
@@ -3573,6 +4154,7 @@
     exports.estreeDecode = estreeDecode;
     exports.estreeEncode = estreeEncode;
     exports.evaluate = evaluate;
+    exports.evaluateSimple = evaluateSimple;
     exports.initialise = initialise;
     exports.parseSchemeSimple = parseSchemeSimple;
     exports.stepExpression = stepExpression;
