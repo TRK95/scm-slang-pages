@@ -1728,6 +1728,37 @@
             const result = complexNumbers.reduce((acc, curr) => acc.add(curr), SchemeComplexNumber.fromNumber(0));
             return complexValueToResult(result);
         },
+        // Numeric utilities
+        abs: (x) => {
+            if (!isNumericValue(x)) {
+                throw new Error("abs requires a numeric argument");
+            }
+            if (x.type === "number") {
+                return { type: "number", value: Math.abs(x.value) };
+            }
+            // complex
+            return { type: "number", value: x.value.abs() };
+        },
+        max: (...args) => {
+            if (args.length === 0) {
+                throw new Error("max requires at least one argument");
+            }
+            if (!args.every(v => v.type === "number")) {
+                throw new Error("max currently supports real numbers only");
+            }
+            const vals = args.map(v => v.type === "number" ? v.value : NaN);
+            return { type: "number", value: Math.max(...vals) };
+        },
+        min: (...args) => {
+            if (args.length === 0) {
+                throw new Error("min requires at least one argument");
+            }
+            if (!args.every(v => v.type === "number")) {
+                throw new Error("min currently supports real numbers only");
+            }
+            const vals = args.map(v => v.type === "number" ? v.value : NaN);
+            return { type: "number", value: Math.min(...vals) };
+        },
         "*": (...args) => {
             if (args.length === 0)
                 return { type: "number", value: 1 };
@@ -3591,8 +3622,10 @@
                     const oldNode = node;
                     let newNode;
                     newNode = node.oneStep();
-                    if (redex) {
+                    if (redex && redex.preRedex.length > 0) {
+                        console.log('[SCM-DEBUG] redex.preRedex:', redex.preRedex);
                         const explanations = redex.preRedex.map(explain);
+                        console.log('[SCM-DEBUG] explanations:', explanations);
                         const beforeMarkers = redex.preRedex.map((redex, index) => ({
                             redex: redex,
                             redexType: "beforeMarker",
@@ -3610,6 +3643,7 @@
                             }))
                             : [
                                 {
+                                    redex: redex.preRedex[0],
                                     redexType: "afterMarker",
                                     explanation: explanations[0], // use explanation based on preRedex
                                 },
@@ -3617,6 +3651,14 @@
                         steps.push({
                             ast: newNode,
                             markers: afterMarkers,
+                        });
+                    }
+                    else {
+                        console.log('[SCM-DEBUG] No redex or empty preRedex');
+                        // Add step without markers if no redex
+                        steps.push({
+                            ast: oldNode,
+                            markers: [],
                         });
                     }
                     // reset
@@ -3770,6 +3812,29 @@
                                     result = Number(left) / Number(right);
                                     break;
                                 default: result = 0;
+                            }
+                            // Set redex for before/after markers
+                            if (typeof redex !== 'undefined') {
+                                redex.preRedex = [this];
+                                console.log('[SCM-DEBUG] Set redex.preRedex:', redex.preRedex);
+                                // Create result node for postRedex
+                                const resultNode = {
+                                    type: "Literal",
+                                    literalKind: "number",
+                                    value: result,
+                                    raw: String(result),
+                                    toString: () => String(result),
+                                    isContractible: () => true,
+                                    isOneStepPossible: () => false,
+                                    contract: function () { return this; },
+                                    oneStep: function () { return this; },
+                                    substitute: function () { return this; },
+                                    freeNames: function () { return []; },
+                                    allNames: function () { return []; },
+                                    rename: function () { return this; }
+                                };
+                                redex.postRedex = [resultNode];
+                                console.log('[SCM-DEBUG] Set redex.postRedex:', redex.postRedex);
                             }
                             return {
                                 type: "Literal",
@@ -4127,7 +4192,7 @@
             return identifier.replace(/\$([0-9]+)\$/g, (_, code) => String.fromCharCode(parseInt(code)));
         }
     }
-    // Initialize conductor (following py-slang pattern)
+    // Initialize conductor 
     // Note: This will be executed when the module is loaded
     exports.runnerPlugin = void 0;
     exports.conduit = void 0;
